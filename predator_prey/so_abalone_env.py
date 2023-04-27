@@ -9,7 +9,8 @@ import numpy as np
 import pandas as pd
 from gym import spaces
 from gym.utils import seeding
-from numpy import linalg as LA
+from numpy import linalg
+
 
 class AbaloneParams():
     def __init__(self):
@@ -36,7 +37,9 @@ class SeaOtterParams():
         self.poach_threshold = 0.01  # threshold of poaching activity
         self.poach_high = 0.23  # high level of poaching activity
         self.poach_med = 0.17  # medium level of poaching activity
-        self.poach_low = 0.1  # low level of poaching activity
+        self.isAPoachEfficient = 0  # 0 for No and 1 for Yes
+        # low level of poaching activity
+        self.poach_low = 0.1 if not self.isAPoachEfficient else 0.05
         # living_area = 1036 * 10e5, # activity area of sea otter
         self.death_rate_min = 0.23  # minimum death rate of sea otter
         self.death_rate_max = 0.42  # maximum death rate of sea otter
@@ -50,7 +53,6 @@ class PredatorPrey(gym.Env):
 
         self.actions = 5
 
-        self.isAPoachEfficient = 0  # 0 for No and 1 for Yes
         # intrinsic growths
         self.sogrowth = 0.191  # groth rate of SO
         self.abagrowth = 1.6  # Max growth rate of Abalone
@@ -60,17 +62,7 @@ class PredatorPrey(gym.Env):
         self.k_init = 0.23
 
         self.seed_init = False
-        # do not change  current estimate of poaching activity
-        self.poach_thr = 0.01  # Poaching threshold e.g. density of abalone is very low
-        self.poach_high = 0.23  # Poaching intensity 0.20+-0.3
-        self.poach_med = 0.17  # Poaching intensity 0.20+-0.3
         self.proba_spills = 0.1  # To initialize aba population
-
-        self.survival_rate = 0.818  # abalone survival rate
-        # survival of juvenile abalone,
-        self.sj_h = 8.5700e-07
-        self.sj_m = 5.4200e-07
-        self.sj_l = 2.2700e-07
 
         self.area_aba = np.sum(self.aba.areas)  # total area of abalone
         self.aba_capa = (self.aba.total_area * self.aba.max_density) / 2
@@ -106,6 +98,7 @@ class PredatorPrey(gym.Env):
         self.abundance = 0
         self.density = 0
         self.num_aba_list = []
+        self.num_so = 100
 
     def derive_rmax(self):
         """ this func will return the ~[1.05,1.2,1.4,1.6] which are the
@@ -129,21 +122,21 @@ class PredatorPrey(gym.Env):
         finit = finit * self.ratio_mf * self.sj_h * 10e5  # millions
         return finit
 
-    def Ginith(self):
-        """ this func will return the G matrix (Leslie Matrix) of the model"""
-        G = np.zeros((10, 10))
-        G[0, :] = self.female_aba_pop()
-        G[1, 0] = self.survival_rate
-        G[2, 1] = self.survival_rate
-        G[3, 2] = self.survival_rate
-        G[4, 3] = self.survival_rate
-        G[5, 4] = self.survival_rate
-        G[6, 5] = self.survival_rate
-        G[7, 6] = self.survival_rate
-        G[8, 7] = self.survival_rate
-        G[9, 8] = self.survival_rate
-        G[9, 9] = self.survival_rate
-        return G
+    def calculate_survival_rate_matrix(self):
+        """Calculate the survival rate matrix of abalone.
+
+        Returns:
+            survival_matrix (np.array): survival rate matrix of abalone
+
+        """
+        survival_matrix = np.zeros((10, 10))
+        # survival rate of juvenile abalone (age 4)
+        survival_matrix[0, :] = self.aba.fertility_rates * self.aba.fertility_rates * self.aba.sj_h
+        # survival rate of adult abalone (age 5-13)
+        for i in range(1, 10):
+            survival_matrix[i, i - 1] = self.aba.survival_rate
+        survival_matrix[9, 9] = self.aba.survival_rate
+        return survival_matrix
 
     def ini_aba_pop(self):
         """ only females initial population """
@@ -154,16 +147,16 @@ class PredatorPrey(gym.Env):
         k = k_target * self.aba.total_area
         x = self.derive_rmax()
         rma = self.rand_k @ np.transpose(x)
-        self.G = self.Ginith()
+        self.survival_matrix = self.calculate_survival_rate_matrix()
         for _ in range(50):
             all1 = np.sum(INIT_N)
             r1 = rma * k / (rma * all1 - all1 + k)
-            v, w = LA.eig(self.G)
+            v, w = linalg.eig(self.survival_matrix)
             yy = np.append(v, w)
             z = np.max(yy)
             m1 = r1 / z.real
-            self.G = self.G * m1
-            INIT_N = np.dot(self.G, INIT_N)
+            self.survival_matrix = self.survival_matrix * m1
+            INIT_N = np.dot(self.survival_matrix, INIT_N)
         N1f = INIT_N
         N1 = N1f / self.ratio_mf
         return N1, N1f
@@ -223,24 +216,18 @@ class PredatorPrey(gym.Env):
         return np.array([cmin, cmax, dmin, dmax])
 
     def reset(self):
-        self.step_index = 0
+        self.step_counter = 0
         if self.run != 0:
             self.save_csv(self.out_csv_name, self.run)
         self.run += 1
         self.metrics = []
 
-        if self.isAPoachEfficient == 0:
-            self.poach_low = 0.1
-        else:
-            self.poach_low = 0.05
-        if self.so.max_capacity_by_num < 500:
-            print("Too less Sea otters,  program not designed for small populations")
+        self.num_so = 100
         self.num_aba_list, self.AbaPopF = self.ini_aba_pop()
-        self.num_so = 0
         return np.append(self.num_aba_list, self.num_so)
 
     def step(self, action):
-        self.step_index += 1
+        self.step_counter += 1
         # act
         self.poach_rate_factor = self.adjust_poach_rate(action)
 
@@ -275,7 +262,7 @@ class PredatorPrey(gym.Env):
         state = self.compute_obs()
         reward = self.compute_reward()
 
-        done = self.step_index >= self.episode_lenght
+        done = self.step_counter >= self.episode_lenght
         info = self.compute_step_info()
         self.metrics.append(info)
 
@@ -299,12 +286,12 @@ class PredatorPrey(gym.Env):
         #            rmax=r[3]
         all1 = np.sum(AbaPopF)
         r1 = rmax * k / (rmax * all1 - all1 + k)
-        v, w = LA.eig(self.G)
+        v, w = linalg.eig(self.survival_matrix)
         yy = np.append(v, w)
         max_eig_G = np.max(yy)
         m1 = r1 / max_eig_G.real
-        self.G = self.G * m1
-        AbaPopF = np.dot(self.G, AbaPopF)
+        self.survival_matrix = self.survival_matrix * m1
+        AbaPopF = np.dot(self.survival_matrix, AbaPopF)
         AbaPop = AbaPopF / self.ratio_mf
 
         return AbaPop, AbaPopF
@@ -363,28 +350,44 @@ class PredatorPrey(gym.Env):
                         i = 1
         return new_Tabundance_prey
 
-    def compute_poaching_impact(self, N, Nf, poach):
-        all1 = np.sum(N)
-        impact_poaching = np.random.rand()
-        if poach > 0:  # High and Medium poaching
-            if impact_poaching > 0.5:
-                impact = (self.poach_high - self.poach_low) * poach + self.poach_low
+    def compute_poaching_impact(self, num_aba_by_age, num_aba_female_by_age, poach_rate_factor):
+        """ Compute the impact of poaching on the abalone population.
+
+        Args:
+            num_aba_by_age (list): number of abalone by age (4-13)
+            num_aba_female_by_age (list): number of female abalone by age (4-13)
+            poach_rate_factor (float): poaching rate factor [0, 1]
+
+        Returns:
+            num_aba_by_age (list): adjusted number of abalone by age (4-13)
+            num_aba_female_by_age (list): adjusted number of female abalone by age (4-13)
+        """
+        # compute the total number of abalone
+        sum_aba = np.sum(num_aba_by_age)
+        # random impact level
+        random_impact_level = np.random.rand()
+        impact_factor = 0
+        if poach_rate_factor > 0:  # High and Medium poaching
+            if random_impact_level > 0.5:
+                impact_factor = (self.so.poach_high - self.so.poach_low) * poach_rate_factor + self.so.poach_low
             else:
-                impact = (self.poach_med - self.poach_low) * poach + self.poach_low
-        elif poach == 0:  # Low poaching
-            if impact_poaching > 0.5:
-                impact = self.poach_low + 0.01
+                impact_factor = (self.so.poach_med - self.so.poach_low) * poach_rate_factor + self.so.poach_low
+        elif poach_rate_factor == 0:  # Low poaching
+            if random_impact_level > 0.5:
+                impact_factor = self.so.poach_low + 0.01
             else:
-                impact = self.poach_low - 0.01
+                impact_factor = self.so.poach_low - 0.01
         else:
             print("Invalid poaching")
-        # check thershold
-        if (all1 / self.aba.total_area) < self.poach_thr:
-            impact = 0.01
-        N = (1 - impact) * N
-        Nf = (1 - impact) * Nf  # females
 
-        return N, Nf
+        # if the impact factor is less than the threshold, then the impact is negligible
+        if (sum_aba / self.aba.total_area) < self.so.poach_threshold:
+            impact_factor = 0.01
+
+        # compute the impact
+        num_aba_by_age *= (1 - impact_factor)
+        num_aba_female_by_age *= (1 - impact_factor)
+        return num_aba_by_age, num_aba_female_by_age
 
     def compute_obs(self):
         """ Compute the observation for the current step.
