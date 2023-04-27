@@ -13,7 +13,7 @@ from numpy import linalg as LA
 
 
 class PredatorPrey(gym.Env):
-    def __init__(self, out_csv_name, ggi, iFR, iFRnum):    
+    def __init__(self, out_csv_name, ggi, iFR, iFRnum, save_mode = 'append'):    
         self.actions = 5
         self.isAPoachEfficient = 0                              # 0 for No and 1 for Yes
         # intrinsic growths
@@ -67,6 +67,11 @@ class PredatorPrey(gym.Env):
         self.p = 0
         self.iFR = iFR
         self.iFRnum = iFRnum
+        # choose how to save the results, either append or write
+        # check save_mode input
+        if save_mode not in ['append', 'write']:
+            raise TypeError(f"{save_mode} is an invalid save mode, please choose between 'append' and 'write'")
+        self.save_mode = save_mode
         
     def derive_rmax(self):
         """ this func will return the ~[1.05,1.2,1.4,1.6] which are the
@@ -406,8 +411,18 @@ class PredatorPrey(gym.Env):
 
     def save_csv(self, out_csv_name, run):
         if out_csv_name is not None:
-            df = pd.DataFrame(self.metrics)
-            df.to_csv(out_csv_name + '_run{}'.format(run) + '.csv', index=False)
+            if self.save_mode == 'write':
+                df = pd.DataFrame(self.metrics)
+                df.to_csv(out_csv_name + '_run{}'.format(run) + '.csv', index=False)
+            elif self.save_mode == 'append':
+                if self.run == 1:
+                    df = pd.DataFrame(self.metrics)
+                    df.to_csv(out_csv_name + '.csv', index=False)
+                else:
+                    df = pd.DataFrame(self.metrics)
+                    df.to_csv(out_csv_name + '.csv', mode='a', header=False, index=False)
+            else:
+                raise TypeError('Invalid save mode')
 
 
  

@@ -8,7 +8,7 @@ from so_abalone_env import PredatorPrey
 if __name__ == '__main__':
     prs = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                   description=""" Random """)
-    prs.add_argument("-fr", dest="ifr", type=int, default=1, required=False, help="Functional Response for SC\n")
+    prs.add_argument("-fr", dest="ifr", type=int, default=2, required=False, help="Functional Response for SC\n")
     prs.add_argument("-fnum", dest="ifrnum", type=int, default=2, required=False, help="Functional Response Num for SC\n")
 
     args = prs.parse_args()
