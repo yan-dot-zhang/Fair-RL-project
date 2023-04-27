@@ -28,7 +28,8 @@ For DC environment please check the main [iroko](https://github.com/dcgym/iroko)
 ## Example
 ### Run PPO on SC domain:
 ```
-python predator_prey/ppo_so_aba.py 
+export PYTHONPATH=$PYTHONPATH:$(pwd)
+python predator_prey/ppo_so_aba.py
 ``` 
 
 
