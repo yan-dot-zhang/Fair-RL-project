@@ -11,17 +11,49 @@ from gym import spaces
 from gym.utils import seeding
 from numpy import linalg as LA
 
+class AbaloneParams():
+    def __init__(self):
+        self.max_density = 3.34  # max carrying capacity (#abalone per m^2)
+        # density_range = np.linspace(0.835, 3.34, 4)  # density of abalone in 4 habitats
+        self.survival_rate = 0.818  # survival rate of abalone
+        self.sj_h = 0.0857  # survival rate of juvenile abalone in high level
+        self.sj_m = 0.0542  # survival rate of juvenile abalone in medium level
+        self.sj_l = 0.0227  # survival rate of juvenile abalone in low level
+        self.growth_rate_range = np.linspace(1.05, 1.6, 4)  # growth rate of abalone in 4 habitats
+        self.female_ratio = 0.5 # ratio of female abalone
+        self.fertility_rates = np.array([0.136, 0.26, 0.38, 0.491, 0.593,
+                                0.683, 0.745, 0.795, 0.835, 1.166])  # age-specific fertility rate
+        self.areas = np.array([64.78, 109.47, 90.10, 31.35]) * 10e5  # surfaces of the 4 kinds of habitat
+        self.total_area = np.sum(self.areas)
+        self.init_density = 0.23  # initial density of abalone
+
+
+class SeaOtterParams():
+    def __init__(self):
+        self.init_population = 100 # initial population of sea otter
+        self.growth_rate = 0.191  # growth rate of sea otter
+        self.max_capacity_by_num = 4073  # carrying capacity of sea otter by the total number
+        self.poach_threshold = 0.01  # threshold of poaching activity
+        self.poach_high = 0.23  # high level of poaching activity
+        self.poach_med = 0.17  # medium level of poaching activity
+        self.poach_low = 0.1  # low level of poaching activity
+        # living_area = 1036 * 10e5, # activity area of sea otter
+        self.death_rate_min = 0.23  # minimum death rate of sea otter
+        self.death_rate_max = 0.42  # maximum death rate of sea otter
+        self.legal_culling_rate = 0.6  # authorise culling when sea otter density is above 60% of carrying capacity
+        self.oil_spill_freq = 0.1  # oil spill frequency
 
 class PredatorPrey(gym.Env):
     def __init__(self, out_csv_name, ggi, iFR, iFRnum, save_mode='append'):
+        self.so = SeaOtterParams()
+        self.aba = AbaloneParams()
+
         self.actions = 5
+
         self.isAPoachEfficient = 0  # 0 for No and 1 for Yes
         # intrinsic growths
         self.sogrowth = 0.191  # groth rate of SO
         self.abagrowth = 1.6  # Max growth rate of Abalone
-        # carrying capacity
-        self.ocapacoty = 4073  # number to density
-        self.acapacity = 3.34  # density
         self.ratio_mf = 0.5
 
         self.avg_abadensity = 0.21
@@ -40,16 +72,14 @@ class PredatorPrey(gym.Env):
         self.sj_m = 5.4200e-07
         self.sj_l = 2.2700e-07
 
-        # do not change/ specific to pacific rim national park, BC, Canada.
-        self.surf_k = np.array([64.78, 109.47, 90.10, 31.35]) * 10e5  # surfaces of the 4 kinds of habitat
-        self.area_aba = np.sum(self.surf_k)  # total area of abalone
-        self.aba_capa = (self.area_aba * self.acapacity) / 2
-        self.rand_k = self.surf_k / self.area_aba
+        self.area_aba = np.sum(self.aba.areas)  # total area of abalone
+        self.aba_capa = (self.aba.total_area * self.aba.max_density) / 2
+        self.rand_k = self.aba.areas / self.aba.total_area
 
         # define the obsevation and action space
         self.action_space = spaces.Discrete(self.actions)
         self.reward_space = spaces.Discrete(2)
-        self.observation_space = spaces.Box(low=0, high=self.area_aba * self.acapacity, shape=(11,),
+        self.observation_space = spaces.Box(low=0, high=self.aba.total_area * self.aba.max_density, shape=(11,),
                                             dtype=np.float32)
         self.episode_lenght = 5000  # 13.7 year
 
@@ -64,7 +94,7 @@ class PredatorPrey(gym.Env):
         self.run = 0
         self.out_csv_name = out_csv_name
         self.ggi = ggi
-        self.p = 0
+        self.poach_rate_factor = 0
         self.iFR = iFR
         self.iFRnum = iFRnum
         # choose how to save the results, either append or write
@@ -72,6 +102,10 @@ class PredatorPrey(gym.Env):
         if save_mode not in ['append', 'write']:
             raise TypeError(f"{save_mode} is an invalid save mode, please choose between 'append' and 'write'")
         self.save_mode = save_mode
+
+        self.abundance = 0
+        self.density = 0
+        self.num_aba_list = []
 
     def derive_rmax(self):
         """ this func will return the ~[1.05,1.2,1.4,1.6] which are the
@@ -86,7 +120,7 @@ class PredatorPrey(gym.Env):
     def derive_kabah(self):
         """ this func will return the ~[0.837,1.67,2.5,3.34] which are the
         defaults of abalone carrying capacity"""
-        c = self.acapacity / 4
+        c = self.aba.max_density / 4
         return np.array([c, 2 * c, 3 * c, 4 * c])
 
     def female_aba_pop(self):
@@ -115,9 +149,9 @@ class PredatorPrey(gym.Env):
         """ only females initial population """
         # age specific density
         INIT_N = np.array(
-            [0.047, 0.056, 0.040, 0.023, 0.018, 0.007, 0.011, 0.003, 0.00, 0.025]) * self.ratio_mf * self.area_aba
+            [0.047, 0.056, 0.040, 0.023, 0.018, 0.007, 0.011, 0.003, 0.00, 0.025]) * self.ratio_mf * self.aba.total_area
         k_target = self.k_init * self.ratio_mf
-        k = k_target * self.area_aba
+        k = k_target * self.aba.total_area
         x = self.derive_rmax()
         rma = self.rand_k @ np.transpose(x)
         self.G = self.Ginith()
@@ -141,8 +175,8 @@ class PredatorPrey(gym.Env):
     def aba_avg_carry_capacity(self):
         """ compute Average carrying capacity for females abalones """
         k_aba_h = self.derive_kabah()
-        d = np.sum(k_aba_h * self.surf_k)
-        self.k_aba = d / self.area_aba
+        d = np.sum(k_aba_h * self.aba.areas)
+        self.k_aba = d / self.aba.total_area
         k_aba_fem = self.k_aba * self.ratio_mf  # Average carrying capacity females
         return k_aba_fem
 
@@ -199,50 +233,50 @@ class PredatorPrey(gym.Env):
             self.poach_low = 0.1
         else:
             self.poach_low = 0.05
-        if self.ocapacoty < 500:
+        if self.so.max_capacity_by_num < 500:
             print("Too less Sea otters,  program not designed for small populations")
-        self.abalone, self.AbaPopF = self.ini_aba_pop()
-        self.otters = 0
-        return np.append(self.abalone, self.otters)
+        self.num_aba_list, self.AbaPopF = self.ini_aba_pop()
+        self.num_so = 0
+        return np.append(self.num_aba_list, self.num_so)
 
     def step(self, action):
         self.step_index += 1
         # act
-        self.p = self._take_action(action)
+        self.poach_rate_factor = self.adjust_poach_rate(action)
 
         # update abalone
         AbaPopF = self.AbaPopF
-        AbaPop = self.abalone
+        AbaPop = self.num_aba_list
         AbaPop, AbaPopF = self.northern_abalone_growth_t(AbaPopF)
 
         # update SO
-        self.otters, oil = self.sea_otter_growth(self.otters)
+        self.num_so, oil = self.sea_otter_growth(self.num_so)
         if action == 3:
-            self.otters = min(self.authorise_culling * self.ocapacoty, self.otters)
+            self.num_so = min(self.authorise_culling * self.so.max_capacity_by_num, self.num_so)
         if action == 4:
-            remove = (self.otters - self.authorise_culling * self.ocapacoty) / 2
-            self.otters = min(self.otters - remove, self.otters)
+            remove = (self.num_so - self.authorise_culling * self.so.max_capacity_by_num) / 2
+            self.num_so = min(self.num_so - remove, self.num_so)
 
         # predation
-        if self.otters != 0:
-            #            print("desity before predation", np.sum(AbaPop)/self.area_aba)
-            AbaPop = self.predation_FR(self.otters, AbaPop)
+        if self.num_so != 0:
+            #            print("desity before predation", np.sum(AbaPop)/self.aba.total_area)
+            AbaPop = self.predation_FR(self.num_so, AbaPop)
             AbaPopF = AbaPop * self.ratio_mf
             if np.sum(AbaPopF) < 0:
                 print('We are in debt, predators are starving')
 
         # poaching
-        AbaPop, AbaPopF = self.compute_poaching_impact(AbaPop, AbaPopF, self.p)
+        AbaPop, AbaPopF = self.compute_poaching_impact(AbaPop, AbaPopF, self.poach_rate_factor)
         if np.sum(AbaPopF) < 0:
             print('We are in debt, predators are starving')
 
-        self.abalone = AbaPop
+        self.num_aba_list = AbaPop
         self.AbaPopF = AbaPopF
         state = self.compute_obs()
         reward = self.compute_reward()
 
         done = self.step_index >= self.episode_lenght
-        info = self._compute_step_info()
+        info = self.compute_step_info()
         self.metrics.append(info)
 
         return state, reward, done, info
@@ -250,7 +284,7 @@ class PredatorPrey(gym.Env):
     def northern_abalone_growth_t(self, AbaPopF):
         k_aba_f = self.aba_avg_carry_capacity()  # scalar value
         r = self.derive_rmax()  # vector(4)~ growths
-        k = k_aba_f * self.area_aba  # scalar
+        k = k_aba_f * self.aba.total_area  # scalar
 
         rmax = self.rand_k @ np.transpose(r)
         # uncomment if want a stochastic growth rate
@@ -277,7 +311,7 @@ class PredatorPrey(gym.Env):
 
     def sea_otter_growth(self, N):
         OS = 0
-        Y = N * np.exp(self.sogrowth * (1 - N / self.ocapacoty))
+        Y = N * np.exp(self.sogrowth * (1 - N / self.so.max_capacity_by_num))
         oil_spill = np.random.rand()
         if oil_spill < self.oil_spill_frequency:
             dead_prct = self.dead_prct_min + (self.dead_prct_max - self.dead_prct_min) * np.random.rand()
@@ -294,7 +328,7 @@ class PredatorPrey(gym.Env):
         else:
             days = 365  # 1 year = 365 days
             sum_Tabundance_prey = np.sum(Tabundance_prey)
-            Nd = sum_Tabundance_prey / self.area_aba  # Nd = density
+            Nd = sum_Tabundance_prey / self.aba.total_area  # Nd = density
             if self.iFR == 1:
                 v = self.derive_hyp_FR()
                 c = v[self.iFRnum]
@@ -345,7 +379,7 @@ class PredatorPrey(gym.Env):
         else:
             print("Invalid poaching")
         # check thershold
-        if (all1 / self.area_aba) < self.poach_thr:
+        if (all1 / self.aba.total_area) < self.poach_thr:
             impact = 0.01
         N = (1 - impact) * N
         Nf = (1 - impact) * Nf  # females
@@ -353,30 +387,52 @@ class PredatorPrey(gym.Env):
         return N, Nf
 
     def compute_obs(self):
-        if self.otters > self.ocapacoty:
-            self.otters = self.ocapacoty
-        if (np.sum(self.abalone) / self.area_aba) > self.acapacity:
+        """ Compute the observation for the current step.
+
+        Returns:
+
+        """
+        # number of sea otters do not exceed its environment capacity
+        self.num_so = min(self.so.max_capacity_by_num, self.num_so)
+        # number of abalone do not exceed its environment capacity
+        if (np.sum(self.num_aba_list) / self.aba.total_area) > self.aba.max_density:
             print("Abalone density exceeds from its capacity")
-            self.abalone = self.acapacity
-        return np.append(self.abalone, self.otters)
+            # TODO: it looks like a bug, as we are assigning a value to a list
+            # It never gets executed as the condition seems never true.
+            self.num_aba_list = self.aba.max_density
+        return np.concatenate([self.num_aba_list, [self.num_so]])
 
     def compute_reward(self):
-        self.abundance = self.otters / self.ocapacoty
-        self.density = np.sum(self.abalone) / self.area_aba
+        """ Reward for the current step represented by the sum of normalized current capacity.
+
+        Returns:
+            (`float`): The reward for the current step.
+
+        """
+        # sea otter abundance is normalized by its capacity (0-1)
+        self.abundance = self.num_so / self.so.max_capacity_by_num
+        # abalone density is normalized by its capacity (0-1)
+        self.density = np.sum(self.num_aba_list) / self.aba.total_area
         if self.ggi:
             return np.append(self.abundance, self.density)
         a = np.append(self.abundance, self.density)
         return np.sum(a)
 
-    def _compute_step_info(self):
+    def compute_step_info(self):
+        """ register the step information and return the metrics.
+
+        Returns:
+            (`dict`): A dictionary containing the metrics for the current step.
+
+        """
         return {
             'Sea_Otters': self.abundance,
-            'NOrthern_Abalone': self.density,
+            'Northern_Abalone': self.density,
             'Sum': self.abundance + self.density
         }
 
-    def _take_action(self, action):
-        """ Maps the action to a poaching rate adjustment factor.
+    def adjust_poach_rate(self, action):
+        """ Maps the action to a poaching rate adjustment factor [0-low, 1-high].
 
         Args:
             action: The action to be taken.
@@ -385,32 +441,29 @@ class PredatorPrey(gym.Env):
             The poaching rate adjustment factor.
 
         """
+        poach_adjustment_rate = 1
         # do nothing
         if action == 0:
-            paoch = 1
-        # introduce sea otters
+            poach_adjustment_rate = 1
+        # 2: introduce sea otters
         elif action == 1:
-            # check the recovery of abalone
-            oters = self.ini_so_pop()
-            self.otters = oters
-            paoch = 0
-            # enforce paoching
+            self.num_so = 100
+            poach_adjustment_rate = 0
+        # 3: reduce harvesting
         elif action == 2:
-            # reduce harvesting
-            paoch = 0
-        # control sea otters(by direct removing them)
+            poach_adjustment_rate = 0
+        # 4: control sea otters (by direct removing them)
         elif action == 3:
-            paoch = 1
-        # half enforce half control
+            poach_adjustment_rate = 1
+        # 5: half enforce half control
         elif action == 4:
-            paoch = 0.5
+            poach_adjustment_rate = 0.5
         else:
             print("Invalid action")
-
-        return paoch
+        return poach_adjustment_rate
 
     def _set_poach(self, poach):
-        self.p = poach
+        self.poach_rate_factor = poach
 
     def render(self, mode='human'):
         pass
