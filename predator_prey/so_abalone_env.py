@@ -199,7 +199,9 @@ class PredatorPrey(gym.Env):
         consumption_rates = []  # consumption rates
         half_saturation_consts = []  # half saturation constants
 
+        # calculate the consumption rate and half saturation constant for each foraging success rate
         for idx in range(len(total_foraging_time)):
+            # attack rate is calculated following the formula in the paper
             attack_rate = self.so.max_num_aba_eaten / (self.density_aba * total_foraging_time[idx] - \
                           self.so.max_num_aba_eaten * total_handling_time * self.density_aba)
             consumption_rates.append(total_foraging_time[idx] / total_handling_time)
@@ -319,12 +321,14 @@ class PredatorPrey(gym.Env):
                 self.num_so = 0  # die out if below threshold
 
     def predation_on_func_response(self):
+        """ Predation on abalone population based on functional response.
 
-        # abundance_predator = self.num_so
-        # Tabundance_prey = self.num_aba_by_age
+        Returns:
+            None
 
-        # sum_Tabundance_prey = np.sum(self.num_aba_by_age)
+        """
         num_aba = np.sum(self.num_aba_by_age)
+        # calculate the number of prey to be removed
         removed_aba = 0
         if self.num_so != 0:
             days = 365  # simulate for 365 days
@@ -347,22 +351,30 @@ class PredatorPrey(gym.Env):
             else:
                 print("Invalid functional response")
 
+        # remove according to the number of prey to be removed
         if removed_aba > num_aba:
             print("population crash")
             self.num_aba_by_age = np.zeros(len(self.num_aba_by_age))
         else:
-            removed = np.ones(len(self.num_aba_by_age)) * removed_aba / 10
-            self.num_aba_by_age = self.num_aba_by_age - removed
-            if (sum(self.num_aba_by_age < 0) > 0):
-                i = 1
-                while (sum(self.num_aba_by_age < 0) > 0):
-                    if self.num_aba_by_age[i] < 0:
-                        index = np.mod(i + 1, len(self.num_aba_by_age)) + 1
-                        self.num_aba_by_age[index] = self.num_aba_by_age[index] - self.num_aba_by_age[i]
-                        self.num_aba_by_age[i] = 0
-                    i += 1
-                    if i > len(self.num_aba_by_age):
-                        i = 1
+            # distribute uniformly the number of prey to be removed to different age groups
+            self.num_aba_by_age -= removed_aba / 10
+            # Check if there are any negative values in the array
+            if any(self.num_aba_by_age < 0):
+                index = 0
+                # Continue looping while there are still negative values in the array
+                while any(self.num_aba_by_age < 0):
+                    # If the current element is negative, redistribute its value to other elements
+                    if self.num_aba_by_age[index] < 0:
+                        # Compute the index of the age group to add the negative value to
+                        index_used_to_adjust = np.mod(index + 1, len(self.num_aba_by_age)) + 1
+                        # Add the negative value to the selected age group
+                        self.num_aba_by_age[index_used_to_adjust] -= self.num_aba_by_age[index]
+                        # Set the current element to zero
+                        self.num_aba_by_age[index] = 0
+                    index += 1
+                    # If we have reached the end of the array, reset the counter variable
+                    if index >= len(self.num_aba_by_age):
+                        index = 0
         # update female abalone population
         self.num_aba_by_age_female = self.num_aba_by_age * self.aba.female_ratio
 
@@ -406,6 +418,7 @@ class PredatorPrey(gym.Env):
         """ Compute the observation for the current step.
 
         Returns:
+            (`np.array`): The observation for the current step.
 
         """
         # number of sea otters do not exceed its environment capacity
@@ -458,7 +471,7 @@ class PredatorPrey(gym.Env):
 
         """
         poach_adjustment_rate = 1
-        # do nothing
+        # 1: do nothing
         if action == 0:
             poach_adjustment_rate = 1
         # 2: introduce sea otters
