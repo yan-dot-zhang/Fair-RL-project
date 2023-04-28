@@ -4,6 +4,12 @@ Created on Tue Dec 24 13:55:40 2019 by @author: umer
 Adapted on Wed Apr 26, 2023.
 """
 
+# temporarily disable the warnings
+import warnings
+warnings.filterwarnings("ignore")
+import tensorflow.compat.v1 as tf
+tf.logging.set_verbosity(tf.logging.ERROR)
+
 import gym
 import numpy as np
 import pandas as pd
@@ -18,28 +24,28 @@ class AbaloneParams():
         self.areas = np.array([64.78, 109.47, 90.10, 31.35]) * 10e5
         self.total_area = np.sum(self.areas)
         self.area_ratios = self.areas / self.total_area
-        # intial population
-        self.init_density_best = 0.23   # initial density of abalone
+        # initial population
+        self.init_density_best = 0.23  # initial density of abalone
         self.init_density_by_age = np.array([0.047, 0.056, 0.040, 0.023, 0.018,
                                              0.007, 0.011, 0.003, 0.00, 0.025])
-        self.max_density = 3.34         # max carrying capacity (#abalone per m^2)
+        self.max_density = 3.34  # max carrying capacity (#abalone per m^2)
         self.density_by_area = np.linspace(0.835, 3.34, 4)  # density of abalone in 4 habitats
         # survival rates
-        self.survival_rate = 0.818      # survival rate of adult abalone
-        self.sj_h = 0.857               # survival rate of juvenile abalone in high level
-        self.sj_m = 0.542               # survival rate of juvenile abalone in medium level
-        self.sj_l = 0.227               # survival rate of juvenile abalone in low level
+        self.survival_rate = 0.818  # survival rate of adult abalone
+        self.sj_h = 0.857  # survival rate of juvenile abalone in high level
+        self.sj_m = 0.542  # survival rate of juvenile abalone in medium level
+        self.sj_l = 0.227  # survival rate of juvenile abalone in low level
         # growth rate of abalone in 4 habitats
         self.area_growth_rates = np.linspace(1.05, 1.6, 4)
-        self.female_ratio = 0.5         # ratio of female abalone
+        self.female_ratio = 0.5  # ratio of female abalone
         # age-specific fertility rates
         self.fertility_rates = np.array([0.136, 0.26, 0.38, 0.491, 0.593,
-                                        0.683, 0.745, 0.795, 0.835, 1.166])
+                                         0.683, 0.745, 0.795, 0.835, 1.166])
 
 
 class SeaOtterParams():
     def __init__(self):
-        self.init_population = 100 # initial population of sea otter
+        self.init_population = 100  # initial population of sea otter
         self.growth_rate = 0.191  # growth rate of sea otter
         self.max_capacity_by_num = 4073  # carrying capacity of sea otter by the total number
         self.poach_threshold = 0.01  # threshold of poaching activity
@@ -68,20 +74,21 @@ class PredatorPrey(gym.Env):
         # observation space is a vector of 11 elements, 10 for the 10 age groups of abalone and 1 for the sea otter
         self.observation_space = spaces.Box(low=0, high=self.aba.total_area * self.aba.max_density, shape=(11,),
                                             dtype=np.float32)
-        self.ggi = ggi          # whether to use a fairness objective
+        self.ggi = ggi  # whether to use a fairness objective
 
         # variables to be used
         self.poach_rate_factor = 0
-        self.iFR = iFR
-        self.iFRnum = iFRnum
+        self.feeding_mode = iFR  # 1: hyperbolic, 2: linear
+        self.feeding_level = iFRnum  # 0: low, 1: medium, 2: high
 
         # initial population
         self.num_aba_by_age = []
+        self.num_aba_by_age_female = []
         self.num_so = 100
 
         # record statistics
-        self.abundance = 0      # abundance of sea otter (# / max_capacity)
-        self.density = 0        # density of abalone (# / m^2)
+        self.abundance = 0  # abundance of sea otter (# / max_capacity)
+        self.density = 0  # density of abalone (# / m^2)
         self.metrics = []
 
         # running parameters
@@ -170,42 +177,41 @@ class PredatorPrey(gym.Env):
 
         """
         response_params = np.array([[self.density_aba, self.so.max_num_aba_eaten / 3],
-                                  [self.density_aba, 2 * self.so.max_num_aba_eaten / 3],
-                                  [2 * self.density_aba / 3, self.so.max_num_aba_eaten],
-                                  [self.density_aba / 3, self.so.max_num_aba_eaten]])
+                                    [self.density_aba, 2 * self.so.max_num_aba_eaten / 3],
+                                    [2 * self.density_aba / 3, self.so.max_num_aba_eaten],
+                                    [self.density_aba / 3, self.so.max_num_aba_eaten]])
         return response_params
 
-    def derive_hyp_FR(self):
-        effmin = 0.13
-        effmax = 0.36
-        Tp = np.array([0.4 * effmin, 0.4 * effmax, 0.4 * 1])
-        Th = 166 / 3600 / 24
-        Nmax = self.density_aba
-        #        N = [a for a in np.arange(0,1.9186,0.01)]
-        #        Z = np.zeros((len(Tp),len(N)))
-        #        Y = np.zeros(len(N))
-        c_hyp = []
-        d_hyp = []
+    def derive_hyperbolic_response(self):
+        """ This assumes sea otters are specialist predators feeding mainly on abalone.
 
-        for k in range(len(Tp)):
-            a = self.so.max_num_aba_eaten / (Nmax * Tp[k] - self.so.max_num_aba_eaten * Th * Nmax)
-            c = Tp[k] / Th
-            d = 1 / (a * Th)
-            c_hyp.append(c)
-            d_hyp.append(d)
-        #            for i in range(len(N)):
-        #                Z[k,i]= a*N[i]*Tp[k]/(1+a*Th*N[i])
-        #                Y[i]=a*N[i]*Tp[k]/(1+a*Th*N[i])
-        cmin = c_hyp[0]
-        dmin = d_hyp[0]
-        cmax = c_hyp[1]
-        dmax = d_hyp[1]
+        Returns:
+            hyper_response_params (np.array): a matrix for the hyperbolic predation behavior.
 
-        return np.array([cmin, cmax, dmin, dmax])
+        """
+        # foraging success rates
+        success_rate_min = 0.13
+        success_rate_max = 0.36
+        # total time the animal spent foraging adjusted by the success rate
+        total_foraging_time = np.array([0.4 * success_rate_min, 0.4 * success_rate_max, 0.4 * 1])
+        # total handling time
+        total_handling_time = 166 / 3600 / 24
+        consumption_rates = []  # consumption rates
+        half_saturation_consts = []  # half saturation constants
+
+        for idx in range(len(total_foraging_time)):
+            attack_rate = self.so.max_num_aba_eaten / (self.density_aba * total_foraging_time[idx] - \
+                          self.so.max_num_aba_eaten * total_handling_time * self.density_aba)
+            consumption_rates.append(total_foraging_time[idx] / total_handling_time)
+            half_saturation_consts.append(1 / (attack_rate * total_handling_time))
+        hyper_response_params = np.concatenate([consumption_rates, half_saturation_consts])
+        return hyper_response_params
 
     def reset(self):
         """ Reset the environment to the initial state.
+
         Returns:
+            state (np.array): the initial state of the environment.
 
         """
         self.step_counter = 0
@@ -214,144 +220,164 @@ class PredatorPrey(gym.Env):
         self.run += 1
         self.metrics = []
 
-        self.num_so = 100
-        self.num_aba_by_age, self.AbaPopF = self.ini_aba_pop()
-        return np.append(self.num_aba_by_age, self.num_so)
+        self.num_so = 0
+        self.num_aba_by_age, self.num_aba_by_age_female = self.ini_aba_pop()
+        return np.concatenate([self.num_aba_by_age, [self.num_so]])
 
     def step(self, action):
-        self.step_counter += 1
-        # act
+        """ Take a step in the environment.
+
+        Args:
+            action (`int`): the action to take in the environment.
+
+        Returns:
+            state (`np.array`): the state of the environment after taking the action.
+            reward (`float`): the reward for taking the action.
+            done (`bool`): whether the episode is done.
+            info (`dict`): additional information about the environment.
+
+        """
+        # adjust the poaching rate at each run to better model randomness
         self.poach_rate_factor = self.adjust_poach_rate(action)
 
-        # update abalone
-        AbaPopF = self.AbaPopF
-        AbaPop = self.num_aba_by_age
-        AbaPop, AbaPopF = self.update_abalone_population(AbaPopF)
+        # update the population
+        self.update_abalone_population()
+        self.update_sea_otter_population()
 
-        # update SO
-        self.num_so = self.update_sea_otter_population()
+        # adjust the population after culling
         if action == 3:
             self.num_so = min(self.so.legal_culling_rate * self.so.max_capacity_by_num, self.num_so)
         if action == 4:
-            remove = (self.num_so - self.so.legal_culling_rate * self.so.max_capacity_by_num) / 2
-            self.num_so = min(self.num_so - remove, self.num_so)
+            num_culling = (self.num_so - self.so.legal_culling_rate * self.so.max_capacity_by_num) / 2
+            self.num_so = min(self.num_so - num_culling, self.num_so)
 
-        # predation
+        # adjust the population after predation
         if self.num_so != 0:
-            #            print("desity before predation", np.sum(AbaPop)/self.aba.total_area)
-            AbaPop = self.predation_FR(self.num_so, AbaPop)
-            AbaPopF = AbaPop * self.aba.female_ratio
-            if np.sum(AbaPopF) < 0:
+            self.predation_on_func_response()
+            if np.sum(self.num_aba_by_age_female) < 0:
                 print('We are in debt, predators are starving')
 
-        # poaching
-        AbaPop, AbaPopF = self.compute_poaching_impact(AbaPop, AbaPopF, self.poach_rate_factor)
-        if np.sum(AbaPopF) < 0:
+        # adjust the population after poaching
+        self.compute_poaching_impact(self.poach_rate_factor)
+        if np.sum(self.num_aba_by_age_female) < 0:
             print('We are in debt, predators are starving')
 
-        self.num_aba_by_age = AbaPop
-        self.AbaPopF = AbaPopF
+        # update step counter
+        self.step_counter += 1
+        # get the state, reward, done, and info
         state = self.compute_obs()
         reward = self.compute_reward()
-
         done = self.step_counter >= self.episode_length
         info = self.compute_step_info()
         self.metrics.append(info)
 
         return state, reward, done, info
 
-    def update_abalone_population(self, AbaPopF):
-        density_female_aba = self.calculate_female_aba_avg_density()  # scalar value
-        r = self.aba.area_growth_rates
-        k = density_female_aba * self.aba.total_area  # scalar
+    def update_abalone_population(self):
+        """ Update the abalone population based on the survival matrix and the growth rate.
 
-        rmax = self.aba.area_ratios @ np.transpose(r)
-        all1 = np.sum(AbaPopF)
-        r1 = rmax * k / (rmax * all1 - all1 + k)
-        v, w = linalg.eig(self.survival_matrix)
-        yy = np.append(v, w)
-        max_eig_G = np.max(yy)
-        m1 = r1 / max_eig_G.real
-        self.survival_matrix = self.survival_matrix * m1
-        AbaPopF = np.dot(self.survival_matrix, AbaPopF)
-        AbaPop = AbaPopF / self.aba.female_ratio
+        Returns:
+            None
 
-        return AbaPop, AbaPopF
+        """
+        # calculate the average female growth rate
+        density_female_aba = self.calculate_female_aba_avg_density()
+        # calculate the carrying capacity
+        best_num_female = density_female_aba * self.aba.total_area
+        # calculate the maximum growth rate (by averaging the rates across four areas)
+        max_r = self.aba.area_ratios @ np.transpose(self.aba.area_growth_rates)
+        # calculate the number of females
+        num_female = np.sum(self.num_aba_by_age_female)
+        # predicted population growth rate assumed to follow Beverton-Holt function
+        pred_rate = max_r * best_num_female / (max_r * num_female - num_female + best_num_female)
+        # eigen values of the survival matrix indicate the evolution of the population
+        eig_vals, _ = linalg.eig(self.survival_matrix)
+        growth_rate = pred_rate / np.max(eig_vals).real
+        self.survival_matrix = self.survival_matrix * growth_rate
+
+        # update the population
+        self.num_aba_by_age_female = np.dot(self.survival_matrix,
+                                            self.num_aba_by_age_female)
+        self.num_aba_by_age = self.num_aba_by_age_female / self.aba.female_ratio
 
     def update_sea_otter_population(self):
         """ Sea otter population follows an exponential growth. Oil spill happens randomly and kills a percentage.
 
         Returns:
-            new_num_so (float): new number of sea otters
+            None
 
         """
         # ideal population according to logistic growth of sea otters
-        new_num_so = self.num_so * np.exp(self.so.growth_rate * (1 - self.num_so / self.so.max_capacity_by_num))
+        self.num_so = self.num_so * np.exp(self.so.growth_rate * (1 - self.num_so / self.so.max_capacity_by_num))
         # oil spill happens randomly and kills a percentage of sea otters
         if np.random.rand() < self.so.oil_spill_freq:
             # random death rate
             death_rate_predict = np.random.uniform(self.so.death_rate_min, self.so.death_rate_max)
-            new_num_so -= new_num_so * death_rate_predict
-            if new_num_so < self.so.extinct_threshold:
+            self.num_so -= self.num_so * death_rate_predict
+            if self.num_so < self.so.extinct_threshold:
                 print('Population of sea otter goes extinct bloody oil spill :-[')
-                new_num_so = 0  # die out if below threshold
-        return new_num_so
+                self.num_so = 0  # die out if below threshold
 
-    def predation_FR(self, abundance_predator, Tabundance_prey):
-        if abundance_predator == 0:
-            new_Tabundance_prey = Tabundance_prey
-        else:
-            days = 365  # 1 year = 365 days
-            sum_Tabundance_prey = np.sum(Tabundance_prey)
-            Nd = sum_Tabundance_prey / self.aba.total_area  # Nd = density
-            if self.iFR == 1:
-                v = self.derive_hyp_FR()
-                c = v[self.iFRnum]
-                d = v[self.iFRnum + 2]
-                removed_prey = c * Nd / (d + Nd) * days * abundance_predator
-            elif self.iFR == 2:
-                v = self.get_linear_func_response_params()
-                d_max = v[self.iFRnum][0]
-                Pemax = v[self.iFRnum][1]
-                if Nd < d_max:
-                    removed_prey = Pemax * Nd / d_max * days * abundance_predator
+    def predation_on_func_response(self):
+
+        # abundance_predator = self.num_so
+        # Tabundance_prey = self.num_aba_by_age
+
+        # sum_Tabundance_prey = np.sum(self.num_aba_by_age)
+        num_aba = np.sum(self.num_aba_by_age)
+        removed_aba = 0
+        if self.num_so != 0:
+            days = 365  # simulate for 365 days
+            density_aba = num_aba / self.aba.total_area
+            # calculate the number of prey removed
+            if self.feeding_mode == 1:
+                hyper_response_params = self.derive_hyperbolic_response()
+                consumption_rate = hyper_response_params[self.feeding_level]
+                half_saturation_const = hyper_response_params[self.feeding_level + 3]
+                removed_aba = consumption_rate * density_aba / (half_saturation_const + density_aba) * days * self.num_so
+            elif self.feeding_mode == 2:
+                linear_response_params = self.get_linear_func_response_params()
+                max_density_aba = linear_response_params[self.feeding_level][0]
+                max_num_aba_eaten = linear_response_params[self.feeding_level][1]
+                if density_aba < max_density_aba:
+                    removed_aba = max_num_aba_eaten * density_aba / max_density_aba * days * self.num_so
                 else:
-                    removed_prey = Pemax * Nd / d_max * days * abundance_predator
+                    # TODO: a mistake made here (same as line 343), check the paper
+                    removed_aba = max_num_aba_eaten * density_aba / max_density_aba * days * self.num_so
             else:
                 print("Invalid functional response")
 
-        if removed_prey > sum_Tabundance_prey:
+        if removed_aba > num_aba:
             print("population crash")
-            new_Tabundance_prey = np.zeros(len(Tabundance_prey))
+            self.num_aba_by_age = np.zeros(len(self.num_aba_by_age))
         else:
-            removed = np.ones(len(Tabundance_prey)) * removed_prey / 10
-            new_Tabundance_prey = Tabundance_prey - removed
-            if (sum(new_Tabundance_prey < 0) > 0):
+            removed = np.ones(len(self.num_aba_by_age)) * removed_aba / 10
+            self.num_aba_by_age = self.num_aba_by_age - removed
+            if (sum(self.num_aba_by_age < 0) > 0):
                 i = 1
-                while (sum(new_Tabundance_prey < 0) > 0):
-                    if new_Tabundance_prey[i] < 0:
-                        index = np.mod(i + 1, len(new_Tabundance_prey)) + 1
-                        new_Tabundance_prey[index] = new_Tabundance_prey[index] - new_Tabundance_prey[i]
-                        new_Tabundance_prey[i] = 0
+                while (sum(self.num_aba_by_age < 0) > 0):
+                    if self.num_aba_by_age[i] < 0:
+                        index = np.mod(i + 1, len(self.num_aba_by_age)) + 1
+                        self.num_aba_by_age[index] = self.num_aba_by_age[index] - self.num_aba_by_age[i]
+                        self.num_aba_by_age[i] = 0
                     i += 1
-                    if i > len(new_Tabundance_prey):
+                    if i > len(self.num_aba_by_age):
                         i = 1
-        return new_Tabundance_prey
+        # update female abalone population
+        self.num_aba_by_age_female = self.num_aba_by_age * self.aba.female_ratio
 
-    def compute_poaching_impact(self, num_aba_by_age, num_aba_female_by_age, poach_rate_factor):
+    def compute_poaching_impact(self, poach_rate_factor):
         """ Compute the impact of poaching on the abalone population.
 
         Args:
-            num_aba_by_age (list): number of abalone by age (4-13)
-            num_aba_female_by_age (list): number of female abalone by age (4-13)
             poach_rate_factor (float): poaching rate factor [0, 1]
 
         Returns:
-            num_aba_by_age (list): adjusted number of abalone by age (4-13)
-            num_aba_female_by_age (list): adjusted number of female abalone by age (4-13)
+            None
+
         """
         # compute the total number of abalone
-        sum_aba = np.sum(num_aba_by_age)
+        sum_aba = np.sum(self.num_aba_by_age)
         # random impact level
         random_impact_level = np.random.rand()
         impact_factor = 0
@@ -373,9 +399,8 @@ class PredatorPrey(gym.Env):
             impact_factor = 0.01
 
         # compute the impact
-        num_aba_by_age *= (1 - impact_factor)
-        num_aba_female_by_age *= (1 - impact_factor)
-        return num_aba_by_age, num_aba_female_by_age
+        self.num_aba_by_age *= (1 - impact_factor)
+        self.num_aba_by_age_female *= (1 - impact_factor)
 
     def compute_obs(self):
         """ Compute the observation for the current step.
@@ -452,9 +477,6 @@ class PredatorPrey(gym.Env):
         else:
             print("Invalid action")
         return poach_adjustment_rate
-
-    def _set_poach(self, poach):
-        self.poach_rate_factor = poach
 
     def render(self, mode='human'):
         pass
