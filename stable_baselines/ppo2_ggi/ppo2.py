@@ -503,12 +503,12 @@ class Runner(AbstractEnvRunner):
         initial_state_value = self.model.value(np.squeeze(initial_state), self.states, self.dones)
         
         averaged_state_value = np.mean(initial_state_value, axis=0) # average value of initial state
-        print("averaged_state_valueaveraged_state_valueaveraged_state_valueaveraged_state_value", averaged_state_value)
+        # print("averaged_state_valueaveraged_state_valueaveraged_state_valueaveraged_state_value", averaged_state_value)
         # sort the ggi vector w.r.t v_{so}
         sorted_omega = [np.where(averaged_state_value.argsort()==i)[0][0] for i in range(self.reward_n)]
         omega = np.array([1 / (self.ggi_constant ** i) for i in range(self.reward_n)])
         w = omega[sorted_omega]
-        print("wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", w)
+        # print("wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww", w)
 
 
         # batch of steps to batch of rollouts

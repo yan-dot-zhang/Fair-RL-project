@@ -25,27 +25,44 @@ def make_env(rank, ggi, ifr, ifrnum):
 if __name__ == '__main__':
     prs = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                   description="""A2C on SC""")
-    prs.add_argument("-a", dest="alpha", type=float, default=0.0005, required=False, help="Alpha learning rate.\n")
+    prs.add_argument("-a", dest="alpha", type=float, default=0.0001, required=False, help="Alpha learning rate.\n")
     prs.add_argument("-st", dest="steps", type=int, default=5, required=False, help="n steps for A2C.\n")
     prs.add_argument("-fr", dest="ifr", type=int, default=2, required=False, help="Functional Response for SC\n")
     prs.add_argument("-fnum", dest="ifrnum", type=int, default=2, required=False, help="Functional Response Num for SC\n")
-    prs.add_argument("-ggi", action="store_false", default=False, help="Run GGI algo or not.\n")
+    prs.add_argument("-w", dest="weight", type=int, default=2, required=False, help="Weight coefficient\n")
+    prs.add_argument("-ggi", action="store_true", default=False, help="Run GGI algo or not.\n")
     args = prs.parse_args()
 
     # multiprocess environment
     n_cpu = 10
     ggi = args.ggi
-    env = SubprocVecEnv([make_env(i, ggi, args.ifr, args.ifrnum) for i in range(n_cpu)])
+    env = SubprocVecEnv([make_env(f'ggi{i}' if ggi else i, ggi, args.ifr, args.ifrnum) for i in range(n_cpu)])
     reward_space = 2
 
     if ggi:
         from stable_baselines.a2c_ggi import A2C_GGI
         from stable_baselines.common.policies_ggi import MlpPolicy as GGIMlpPolicy
-        model = A2C_GGI(GGIMlpPolicy, env, reward_space, verbose=0, learning_rate=args.alpha, n_steps=args.steps, lr_schedule='constant')
+        model = A2C_GGI(
+            policy = GGIMlpPolicy, 
+            env = env, 
+            reward_space = reward_space, 
+            weight_coef = args.weight, 
+            verbose=0, 
+            learning_rate=args.alpha, 
+            n_steps=args.steps, 
+            lr_schedule='constant'
+        )
     else:
         from stable_baselines import A2C
         from stable_baselines.common.policies import MlpPolicy
-        model = A2C(MlpPolicy, env, verbose=0, learning_rate=args.alpha, n_steps=args.steps, lr_schedule='constant')
+        model = A2C(
+            policy = MlpPolicy, 
+            env = env, 
+            verbose=0, 
+            learning_rate=args.alpha, 
+            n_steps=args.steps, 
+            lr_schedule='constant'
+        )
 
     model.learn(total_timesteps=1000000)
 
