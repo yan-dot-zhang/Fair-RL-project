@@ -8,7 +8,7 @@ from gym import spaces
 import numpy as np
 from so_abalone_env import PredatorPrey 
 
-from stable_baselines.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv
 
 def make_env(rank, ggi, ifr, ifrnum):
     """
@@ -17,7 +17,7 @@ def make_env(rank, ggi, ifr, ifrnum):
     :param rank: (int) index of the subprocess
     """
     def _init():
-        env = PredatorPrey(out_csv_name='results/reward_a2c{}'.format(rank), ggi=ggi, iFR=ifr, iFRnum=ifrnum)
+        env = PredatorPrey(out_csv_name='results/sb3_reward_a2c{}'.format(rank), ggi=ggi, iFR=ifr, iFRnum=ifrnum)
         
         return env
     return _init
@@ -39,30 +39,14 @@ if __name__ == '__main__':
     env = SubprocVecEnv([make_env(f'ggi{i}' if ggi else i, ggi, args.ifr, args.ifrnum) for i in range(n_cpu)])
     reward_space = 2
 
-    if ggi:
-        from stable_baselines.a2c_ggi import A2C_GGI
-        from stable_baselines.common.policies_ggi import MlpPolicy as GGIMlpPolicy
-        model = A2C_GGI(
-            policy = GGIMlpPolicy, 
-            env = env, 
-            reward_space = reward_space, 
-            weight_coef = args.weight, 
-            verbose=0, 
-            learning_rate=args.alpha, 
-            n_steps=args.steps, 
-            lr_schedule='constant'
-        )
-    else:
-        from stable_baselines import A2C
-        from stable_baselines.common.policies import MlpPolicy
-        model = A2C(
-            policy = MlpPolicy, 
-            env = env, 
-            verbose=0, 
-            learning_rate=args.alpha, 
-            n_steps=args.steps, 
-            lr_schedule='constant'
-        )
+    from stable_baselines3.a2c import A2C, MlpPolicy
+    model = A2C(
+        policy = MlpPolicy,
+        env = env,
+        verbose=1,
+        learning_rate=args.alpha,
+        n_steps=args.steps
+    )
 
     model.learn(total_timesteps=1000000)
 

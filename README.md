@@ -7,12 +7,10 @@ Since learning with discounted rewards is generally easier, this discussion furt
 
 ## Requirements
 
--   Python 3.6 
--   Tensorflow version 1.14
--   OpenAI Gym version: 0.15.3
+-   Python >=3.7
+-   PyTorch version 1.11
+-   OpenAI Gym version: 0.26.1
 -   Matplotlib version 3.1.1
--   SUMO 1.14
--   Ray 0.7.6
 
 ## SUMO installation
 ```

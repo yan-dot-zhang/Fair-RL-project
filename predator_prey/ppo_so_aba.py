@@ -8,7 +8,7 @@ from gym import spaces
 import numpy as np
 from so_abalone_env import PredatorPrey 
 
-from stable_baselines.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv
 
 def make_env(rank, ggi, ifr, ifrnum):
     """
@@ -17,7 +17,7 @@ def make_env(rank, ggi, ifr, ifrnum):
     :param rank: (int) index of the subprocess
     """
     def _init():
-        env = PredatorPrey(out_csv_name='results/reward_ppo{}'.format(rank), ggi=ggi, iFR=ifr, iFRnum=ifrnum)
+        env = PredatorPrey(out_csv_name='results/sb3_reward_ppo{}'.format(rank), ggi=ggi, iFR=ifr, iFRnum=ifrnum)
         
         return env
     return _init
@@ -41,31 +41,15 @@ if __name__ == '__main__':
     env = SubprocVecEnv([make_env(f'ggi{i}' if ggi else i, ggi, args.ifr, args.ifrnum) for i in range(n_cpu)])
     reward_space = 2
 
-    if ggi:
-        from stable_baselines.ppo2_ggi import PPO2_GGI
-        from stable_baselines.common.policies_ggi import MlpPolicy as GGIMlpPolicy
-        model = PPO2_GGI(
-            policy = GGIMlpPolicy, 
-            env = env, 
-            reward_space = reward_space,  
-            weight_coef = args.weight ,
-            gamma = args.gamma,
-            n_steps = args.steps,
-            verbose = 0, 
-            learning_rate = args.alpha, 
-            cliprange = args.clip_range
-        )
-    else:
-        from stable_baselines import PPO2
-        from stable_baselines.common.policies import MlpPolicy
-        model = PPO2(
-            policy = MlpPolicy, 
-            env = env, 
-            gamma = args.gamma,
-            n_steps = args.steps, 
-            verbose = 0, 
-            learning_rate = args.alpha, 
-            cliprange = args.clip_range
-        )
+    from stable_baselines3.ppo import PPO, MlpPolicy
+    model = PPO(
+        policy = MlpPolicy,
+        env = env,
+        gamma = args.gamma,
+        n_steps = args.steps,
+        verbose = 1,
+        learning_rate = args.alpha,
+        clip_range = args.clip_range
+    )
 
     model.learn(total_timesteps=1000000)

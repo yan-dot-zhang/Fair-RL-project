@@ -6,12 +6,13 @@ import sys
 script_path = './predator_prey/'
 
 # run the experiment
+
+raise Exception('stop here')
 # a2c
 subprocess.run(['python', script_path+'a2c_so_aba.py', '-ggi','-st', '10'])
 subprocess.run(['python', script_path+'a2c_so_aba.py', '-st', '10'])
 print('a2c done')
 
-raise Exception('stop here')
 # ppo
 subprocess.run(['python', script_path+'ppo_so_aba.py' , '-ggi', '-a', '0.00005'])
 subprocess.run(['python', script_path+'ppo_so_aba.py', '-a', '0.001'])
