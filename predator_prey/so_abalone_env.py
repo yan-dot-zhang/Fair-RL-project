@@ -17,10 +17,10 @@ class AbaloneParams():
         self.max_density = 3.34  # max carrying capacity (#abalone per m^2)
         self.density_range = np.linspace(0.835, 3.34, 4)  # density of abalone in 4 habitats
         self.survival_rate = 0.818  # survival rate of abalone
-        self.sj_h = 0.0857  # survival rate of juvenile abalone in high level
-        self.sj_m = 0.0542  # survival rate of juvenile abalone in medium level
-        self.sj_l = 0.0227  # survival rate of juvenile abalone in low level
-        self.growth_rate_range = np.linspace(1.05, 1.6, 4)  # growth rate of abalone in 4 habitats
+        self.sj_h = 0.857  # survival rate of juvenile abalone in high level
+        self.sj_m = 0.542  # survival rate of juvenile abalone in medium level
+        self.sj_l = 0.227  # survival rate of juvenile abalone in low level
+        self.area_growth_rates = np.linspace(1.05, 1.6, 4)  # growth rate of abalone in 4 habitats
         self.female_ratio = 0.5 # ratio of female abalone
         self.fertility_rates = np.array([0.136, 0.26, 0.38, 0.491, 0.593,
                                 0.683, 0.745, 0.795, 0.835, 1.166])  # age-specific fertility rate
@@ -53,49 +53,40 @@ class PredatorPrey(gym.Env):
         self.so = SeaOtterParams()
         self.aba = AbaloneParams()
 
+        # define the observation and action space
         self.actions = 5
-
-        self.seed_init = False
-        self.rand_k = self.aba.areas / self.aba.total_area
-
-        # define the obsevation and action space
         self.action_space = spaces.Discrete(self.actions)
         self.reward_space = spaces.Discrete(2)
+        # observation space is a vector of 11 elements, 10 for the 10 age groups of abalone and 1 for the sea otter
         self.observation_space = spaces.Box(low=0, high=self.aba.total_area * self.aba.max_density, shape=(11,),
                                             dtype=np.float32)
-        self.episode_lenght = 5000  # 13.7 year
+        self.ggi = ggi          # whether to use a fairness objective
 
-        self.authorise_culling = 0.6  # Authorise culling when SO has reached 0.6*k_so
-        self.Pemax = 18
-        self.metrics = []
-        self.run = 0
-        self.out_csv_name = out_csv_name
-        self.ggi = ggi
+        # variables to be used
+        self.Pemax = 18 # define the initial state
         self.poach_rate_factor = 0
         self.iFR = iFR
         self.iFRnum = iFRnum
-        # choose how to save the results, either append or write
-        # check save_mode input
-        if save_mode not in ['append', 'write']:
-            raise TypeError(f"{save_mode} is an invalid save mode, please choose between 'append' and 'write'")
-        self.save_mode = save_mode
 
-        self.abundance = 0
-        self.density = 0
+        # initial population
         self.num_aba_list = []
         self.num_so = 100
 
-    def derive_kabah(self):
-        """ this func will return the ~[0.837,1.67,2.5,3.34] which are the
-        defaults of abalone carrying capacity"""
-        c = self.aba.max_density / 4
-        return np.array([c, 2 * c, 3 * c, 4 * c])
+        # record statistics
+        self.abundance = 0      # abundance of sea otter (# / max_capacity)
+        self.density = 0        # density of abalone (# / m^2)
+        self.metrics = []
 
-    def female_aba_pop(self):
-        # age specific eggs per produced by a female abalone
-        finit = np.array([0.136, 0.26, 0.38, 0.491, 0.593, 0.683, 0.745, 0.795, 0.835, 1.166])
-        finit = finit * self.aba.female_ratio * self.aba.sj_h * 10e5  # millions
-        return finit
+        # running parameters
+        self.seed_init = False
+        self.run = 0
+        self.episode_length = 5000  # 13.7 year
+        # output file name
+        self.out_csv_name = out_csv_name
+        # choose how to save the results, either append or write
+        if save_mode not in ['append', 'write']:
+            raise TypeError(f"{save_mode} is an invalid save mode, please choose between 'append' and 'write'")
+        self.save_mode = save_mode
 
     def calculate_survival_rate_matrix(self):
         """Calculate the survival rate matrix of abalone.
@@ -106,7 +97,7 @@ class PredatorPrey(gym.Env):
         """
         survival_matrix = np.zeros((10, 10))
         # survival rate of juvenile abalone (age 4)
-        survival_matrix[0, :] = self.aba.fertility_rates * self.aba.fertility_rates * self.aba.sj_h
+        survival_matrix[0, :] = self.aba.fertility_rates * self.aba.female_ratio * self.aba.sj_h
         # survival rate of adult abalone (age 5-13)
         for i in range(1, 10):
             survival_matrix[i, i - 1] = self.aba.survival_rate
@@ -120,8 +111,7 @@ class PredatorPrey(gym.Env):
             [0.047, 0.056, 0.040, 0.023, 0.018, 0.007, 0.011, 0.003, 0.00, 0.025]) * self.aba.female_ratio * self.aba.total_area
         k_target = self.aba.init_density * self.aba.female_ratio
         k = k_target * self.aba.total_area
-        x = self.aba.growth_rate_range
-        rma = self.rand_k @ np.transpose(x)
+        rma = self.aba.area_ratios @ np.transpose(self.aba.area_growth_rates)
         self.survival_matrix = self.calculate_survival_rate_matrix()
         for _ in range(50):
             all1 = np.sum(INIT_N)
@@ -136,12 +126,9 @@ class PredatorPrey(gym.Env):
         N1 = N1f / self.aba.female_ratio
         return N1, N1f
 
-    def ini_so_pop(self):
-        otters = 100
-        return otters
-
     def calculate_female_aba_avg_density(self):
         """ Calculate the average carrying capacity of female abalones.
+
         Returns:
             density_aba_female(`float`): the density of female abalones.
 
@@ -220,9 +207,9 @@ class PredatorPrey(gym.Env):
         # update SO
         self.num_so = self.update_sea_otter_population()
         if action == 3:
-            self.num_so = min(self.authorise_culling * self.so.max_capacity_by_num, self.num_so)
+            self.num_so = min(self.so.legal_culling_rate * self.so.max_capacity_by_num, self.num_so)
         if action == 4:
-            remove = (self.num_so - self.authorise_culling * self.so.max_capacity_by_num) / 2
+            remove = (self.num_so - self.so.legal_culling_rate * self.so.max_capacity_by_num) / 2
             self.num_so = min(self.num_so - remove, self.num_so)
 
         # predation
@@ -243,7 +230,7 @@ class PredatorPrey(gym.Env):
         state = self.compute_obs()
         reward = self.compute_reward()
 
-        done = self.step_counter >= self.episode_lenght
+        done = self.step_counter >= self.episode_length
         info = self.compute_step_info()
         self.metrics.append(info)
 
@@ -251,20 +238,10 @@ class PredatorPrey(gym.Env):
 
     def update_abalone_population(self, AbaPopF):
         density_female_aba = self.calculate_female_aba_avg_density()  # scalar value
-        r = self.aba.growth_rate_range
+        r = self.aba.area_growth_rates
         k = density_female_aba * self.aba.total_area  # scalar
 
-        rmax = self.rand_k @ np.transpose(r)
-        # uncomment if want a stochastic growth rate
-        #        x = np.random.rand()
-        #        if x <= self.rand_k[0]:  # One way of simulating stochasticity on *r*
-        #            rmax=r[0]
-        #        elif x <= (self.rand_k[0] + self.rand_k[1]):
-        #            rmax=r[1]
-        #        elif x <= (self.rand_k[2]+self.rand_k[1]+self.rand_k[0]):
-        #            rmax=r[2]
-        #        else:
-        #            rmax=r[3]
+        rmax = self.aba.area_ratios @ np.transpose(r)
         all1 = np.sum(AbaPopF)
         r1 = rmax * k / (rmax * all1 - all1 + k)
         v, w = linalg.eig(self.survival_matrix)
