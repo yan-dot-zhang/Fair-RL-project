@@ -15,7 +15,7 @@ from numpy import linalg
 class AbaloneParams():
     def __init__(self):
         self.max_density = 3.34  # max carrying capacity (#abalone per m^2)
-        # density_range = np.linspace(0.835, 3.34, 4)  # density of abalone in 4 habitats
+        self.density_range = np.linspace(0.835, 3.34, 4)  # density of abalone in 4 habitats
         self.survival_rate = 0.818  # survival rate of abalone
         self.sj_h = 0.0857  # survival rate of juvenile abalone in high level
         self.sj_m = 0.0542  # survival rate of juvenile abalone in medium level
@@ -26,6 +26,7 @@ class AbaloneParams():
                                 0.683, 0.745, 0.795, 0.835, 1.166])  # age-specific fertility rate
         self.areas = np.array([64.78, 109.47, 90.10, 31.35]) * 10e5  # surfaces of the 4 kinds of habitat
         self.total_area = np.sum(self.areas)
+        self.area_ratios = self.areas / self.total_area
         self.init_density = 0.23  # initial density of abalone
 
 
@@ -45,6 +46,7 @@ class SeaOtterParams():
         self.death_rate_max = 0.42  # maximum death rate of sea otter
         self.legal_culling_rate = 0.6  # authorise culling when sea otter density is above 60% of carrying capacity
         self.oil_spill_freq = 0.1  # oil spill frequency
+        self.extinct_threshold = 10  # threshold of extinct population (abundance)
 
 class PredatorPrey(gym.Env):
     def __init__(self, out_csv_name, ggi, iFR, iFRnum, save_mode='append'):
@@ -53,19 +55,7 @@ class PredatorPrey(gym.Env):
 
         self.actions = 5
 
-        # intrinsic growths
-        self.sogrowth = 0.191  # groth rate of SO
-        self.abagrowth = 1.6  # Max growth rate of Abalone
-        self.ratio_mf = 0.5
-
-        self.avg_abadensity = 0.21
-        self.k_init = 0.23
-
         self.seed_init = False
-        self.proba_spills = 0.1  # To initialize aba population
-
-        self.area_aba = np.sum(self.aba.areas)  # total area of abalone
-        self.aba_capa = (self.aba.total_area * self.aba.max_density) / 2
         self.rand_k = self.aba.areas / self.aba.total_area
 
         # define the obsevation and action space
@@ -75,12 +65,7 @@ class PredatorPrey(gym.Env):
                                             dtype=np.float32)
         self.episode_lenght = 5000  # 13.7 year
 
-        self.area_so = 1036 * 10e5
         self.authorise_culling = 0.6  # Authorise culling when SO has reached 0.6*k_so
-        self.oil_spill_frequency = 0.1
-        self.dead_prct_min = 0.23
-        self.dead_prct_max = 0.42
-        self.extinct_when = 10  # threshold of extinct population (abundance)
         self.Pemax = 18
         self.metrics = []
         self.run = 0
@@ -100,16 +85,6 @@ class PredatorPrey(gym.Env):
         self.num_aba_list = []
         self.num_so = 100
 
-    def derive_rmax(self):
-        """ this func will return the ~[1.05,1.2,1.4,1.6] which are the
-        defaults of max abalone growths"""
-        if self.abagrowth < 1.05:
-            print("Invalid value of abalone growth rate")
-            exit()
-        b = 1.05
-        a = (self.abagrowth - b) / 3
-        return np.array([b, a + b, 2 * a + b, self.abagrowth])
-
     def derive_kabah(self):
         """ this func will return the ~[0.837,1.67,2.5,3.34] which are the
         defaults of abalone carrying capacity"""
@@ -119,7 +94,7 @@ class PredatorPrey(gym.Env):
     def female_aba_pop(self):
         # age specific eggs per produced by a female abalone
         finit = np.array([0.136, 0.26, 0.38, 0.491, 0.593, 0.683, 0.745, 0.795, 0.835, 1.166])
-        finit = finit * self.ratio_mf * self.sj_h * 10e5  # millions
+        finit = finit * self.aba.female_ratio * self.aba.sj_h * 10e5  # millions
         return finit
 
     def calculate_survival_rate_matrix(self):
@@ -142,10 +117,10 @@ class PredatorPrey(gym.Env):
         """ only females initial population """
         # age specific density
         INIT_N = np.array(
-            [0.047, 0.056, 0.040, 0.023, 0.018, 0.007, 0.011, 0.003, 0.00, 0.025]) * self.ratio_mf * self.aba.total_area
-        k_target = self.k_init * self.ratio_mf
+            [0.047, 0.056, 0.040, 0.023, 0.018, 0.007, 0.011, 0.003, 0.00, 0.025]) * self.aba.female_ratio * self.aba.total_area
+        k_target = self.aba.init_density * self.aba.female_ratio
         k = k_target * self.aba.total_area
-        x = self.derive_rmax()
+        x = self.aba.growth_rate_range
         rma = self.rand_k @ np.transpose(x)
         self.survival_matrix = self.calculate_survival_rate_matrix()
         for _ in range(50):
@@ -158,33 +133,39 @@ class PredatorPrey(gym.Env):
             self.survival_matrix = self.survival_matrix * m1
             INIT_N = np.dot(self.survival_matrix, INIT_N)
         N1f = INIT_N
-        N1 = N1f / self.ratio_mf
+        N1 = N1f / self.aba.female_ratio
         return N1, N1f
 
     def ini_so_pop(self):
         otters = 100
         return otters
 
-    def aba_avg_carry_capacity(self):
-        """ compute Average carrying capacity for females abalones """
-        k_aba_h = self.derive_kabah()
-        d = np.sum(k_aba_h * self.aba.areas)
-        self.k_aba = d / self.aba.total_area
-        k_aba_fem = self.k_aba * self.ratio_mf  # Average carrying capacity females
-        return k_aba_fem
+    def calculate_female_aba_avg_density(self):
+        """ Calculate the average carrying capacity of female abalones.
+        Returns:
+            density_aba_female(`float`): the density of female abalones.
+
+        """
+        # total number of abalones
+        num_aba = np.sum(self.aba.density_range * self.aba.areas)
+        # Average density of abalone
+        self.density_aba = num_aba / self.aba.total_area
+        # Average carrying capacity females
+        density_female_aba = self.density_aba * self.aba.female_ratio
+        return density_female_aba
 
     def seed(self, seed=None):
+        """ Seed the environment for reproducibility. """
+        # TODO: check if this is necessary.
         if not self.seed_init:
-            self.np_random, seed = seeding.np_random(seed)
+            _, self.env_seed = seeding.np_random(seed)
             self.seed_init = True
-            self.env_seed = seed
-        return self.env_seed
 
-    def PARAM_LINEAR_FR(self):
-        v = np.array([[self.k_aba, self.Pemax / 3],
-                      [self.k_aba, 2 * self.Pemax / 3],
-                      [2 * self.k_aba / 3, self.Pemax],
-                      [self.k_aba / 3, self.Pemax]])
+    def get_linear_func_response_params(self):
+        v = np.array([[self.density_aba, self.Pemax / 3],
+                      [self.density_aba, 2 * self.Pemax / 3],
+                      [2 * self.density_aba / 3, self.Pemax],
+                      [self.density_aba / 3, self.Pemax]])
         return v
 
     def derive_hyp_FR(self):
@@ -192,7 +173,7 @@ class PredatorPrey(gym.Env):
         effmax = 0.36
         Tp = np.array([0.4 * effmin, 0.4 * effmax, 0.4 * 1])
         Th = 166 / 3600 / 24
-        Nmax = self.k_aba
+        Nmax = self.density_aba
         #        N = [a for a in np.arange(0,1.9186,0.01)]
         #        Z = np.zeros((len(Tp),len(N)))
         #        Y = np.zeros(len(N))
@@ -234,10 +215,10 @@ class PredatorPrey(gym.Env):
         # update abalone
         AbaPopF = self.AbaPopF
         AbaPop = self.num_aba_list
-        AbaPop, AbaPopF = self.northern_abalone_growth_t(AbaPopF)
+        AbaPop, AbaPopF = self.update_abalone_population(AbaPopF)
 
         # update SO
-        self.num_so, oil = self.sea_otter_growth(self.num_so)
+        self.num_so = self.update_sea_otter_population()
         if action == 3:
             self.num_so = min(self.authorise_culling * self.so.max_capacity_by_num, self.num_so)
         if action == 4:
@@ -248,7 +229,7 @@ class PredatorPrey(gym.Env):
         if self.num_so != 0:
             #            print("desity before predation", np.sum(AbaPop)/self.aba.total_area)
             AbaPop = self.predation_FR(self.num_so, AbaPop)
-            AbaPopF = AbaPop * self.ratio_mf
+            AbaPopF = AbaPop * self.aba.female_ratio
             if np.sum(AbaPopF) < 0:
                 print('We are in debt, predators are starving')
 
@@ -268,10 +249,10 @@ class PredatorPrey(gym.Env):
 
         return state, reward, done, info
 
-    def northern_abalone_growth_t(self, AbaPopF):
-        k_aba_f = self.aba_avg_carry_capacity()  # scalar value
-        r = self.derive_rmax()  # vector(4)~ growths
-        k = k_aba_f * self.aba.total_area  # scalar
+    def update_abalone_population(self, AbaPopF):
+        density_female_aba = self.calculate_female_aba_avg_density()  # scalar value
+        r = self.aba.growth_rate_range
+        k = density_female_aba * self.aba.total_area  # scalar
 
         rmax = self.rand_k @ np.transpose(r)
         # uncomment if want a stochastic growth rate
@@ -292,22 +273,28 @@ class PredatorPrey(gym.Env):
         m1 = r1 / max_eig_G.real
         self.survival_matrix = self.survival_matrix * m1
         AbaPopF = np.dot(self.survival_matrix, AbaPopF)
-        AbaPop = AbaPopF / self.ratio_mf
+        AbaPop = AbaPopF / self.aba.female_ratio
 
         return AbaPop, AbaPopF
 
-    def sea_otter_growth(self, N):
-        OS = 0
-        Y = N * np.exp(self.sogrowth * (1 - N / self.so.max_capacity_by_num))
-        oil_spill = np.random.rand()
-        if oil_spill < self.oil_spill_frequency:
-            dead_prct = self.dead_prct_min + (self.dead_prct_max - self.dead_prct_min) * np.random.rand()
-            OS = dead_prct
-            Y = Y - Y * dead_prct
-            if Y < self.extinct_when:
+    def update_sea_otter_population(self):
+        """ Sea otter population follows an exponential growth. Oil spill happens randomly and kills a percentage.
+
+        Returns:
+            new_num_so (float): new number of sea otters
+
+        """
+        # ideal population according to logistic growth of sea otters
+        new_num_so = self.num_so * np.exp(self.so.growth_rate * (1 - self.num_so / self.so.max_capacity_by_num))
+        # oil spill happens randomly and kills a percentage of sea otters
+        if np.random.rand() < self.so.oil_spill_freq:
+            # random death rate
+            death_rate_predict = np.random.uniform(self.so.death_rate_min, self.so.death_rate_max)
+            new_num_so -= new_num_so * death_rate_predict
+            if new_num_so < self.so.extinct_threshold:
                 print('Population of sea otter goes extinct bloody oil spill :-[')
-                Y = 0
-        return Y, OS
+                new_num_so = 0  # die out if below threshold
+        return new_num_so
 
     def predation_FR(self, abundance_predator, Tabundance_prey):
         if abundance_predator == 0:
@@ -322,7 +309,7 @@ class PredatorPrey(gym.Env):
                 d = v[self.iFRnum + 2]
                 removed_prey = c * Nd / (d + Nd) * days * abundance_predator
             elif self.iFR == 2:
-                v = self.PARAM_LINEAR_FR()
+                v = self.get_linear_func_response_params()
                 d_max = v[self.iFRnum][0]
                 Pemax = v[self.iFRnum][1]
                 if Nd < d_max:
