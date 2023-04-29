@@ -6,17 +6,17 @@ import torch as th
 from gym import spaces
 from torch.nn import functional as F
 
-from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
-from stable_baselines3.common.policies import ActorCriticCnnPolicy, ActorCriticPolicy, BasePolicy, MultiInputActorCriticPolicy
+from stable_baselines3.common_ggi.on_policy_algorithm import GGIOnPolicyAlgorithm
+from stable_baselines3.common.policies import BasePolicy
+from stable_baselines3.common_ggi.policies import GGIActorCriticCnnPolicy, GGIActorCriticPolicy, GGIMultiInputActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from stable_baselines3.common.utils import explained_variance, get_schedule_fn
 
-SelfPPO = TypeVar("SelfPPO", bound="PPO")
+SelfPPO = TypeVar("SelfPPO", bound="PPO_GGI")
 
-
-class PPO(OnPolicyAlgorithm):
+class PPO_GGI(GGIOnPolicyAlgorithm):
     """
-    Proximal Policy Optimization algorithm (PPO) (clip version)
+    Proximal Policy Optimization algorithm on GGF (PPO-GGF) (clip version)
 
     Paper: https://arxiv.org/abs/1707.06347
     Code: This implementation borrows code from OpenAI Spinning Up (https://github.com/openai/spinningup/)
@@ -69,15 +69,17 @@ class PPO(OnPolicyAlgorithm):
     """
 
     policy_aliases: Dict[str, Type[BasePolicy]] = {
-        "MlpPolicy": ActorCriticPolicy,
-        "CnnPolicy": ActorCriticCnnPolicy,
-        "MultiInputPolicy": MultiInputActorCriticPolicy,
+        "MlpPolicy": GGIActorCriticPolicy,
+        "CnnPolicy": GGIActorCriticCnnPolicy,
+        "MultiInputPolicy": GGIMultiInputActorCriticPolicy,
     }
 
     def __init__(
         self,
-        policy: Union[str, Type[ActorCriticPolicy]],
+        policy: Union[str, Type[GGIActorCriticPolicy]],
         env: Union[GymEnv, str],
+        reward_space: int,
+        weight_coef: Union[int, float, np.ndarray],
         learning_rate: Union[float, Schedule] = 3e-4,
         n_steps: int = 2048,
         batch_size: int = 64,
@@ -87,7 +89,7 @@ class PPO(OnPolicyAlgorithm):
         clip_range: Union[float, Schedule] = 0.2,
         clip_range_vf: Union[None, float, Schedule] = None,
         normalize_advantage: bool = True,
-        ent_coef: float = 0.0,
+        ent_coef: float = 0.1,
         vf_coef: float = 0.5,
         max_grad_norm: float = 0.5,
         use_sde: bool = False,
@@ -104,6 +106,7 @@ class PPO(OnPolicyAlgorithm):
         super().__init__(
             policy,
             env,
+            reward_space = reward_space,
             learning_rate=learning_rate,
             n_steps=n_steps,
             gamma=gamma,
@@ -159,6 +162,13 @@ class PPO(OnPolicyAlgorithm):
         self.clip_range_vf = clip_range_vf
         self.normalize_advantage = normalize_advantage
         self.target_kl = target_kl
+        # if weight_coef is scalar, compute weight by 1/weight_coef**i
+        if np.isscalar(weight_coef):
+            self.weight_coef = np.array([1 / (weight_coef ** i) for i in range(reward_space)])
+        elif len(weight_coef) == reward_space:
+            self.weight_coef = weight_coef
+        else:
+            raise TypeError("`weight_coef` should be either scalar or array with length reward_space")
 
         if _init_setup_model:
             self._setup_model()
@@ -173,6 +183,14 @@ class PPO(OnPolicyAlgorithm):
                 assert self.clip_range_vf > 0, "`clip_range_vf` must be positive, " "pass `None` to deactivate vf clipping"
 
             self.clip_range_vf = get_schedule_fn(self.clip_range_vf)
+
+    def get_sorted_weight(self, values:th.Tensor) -> th.Tensor:
+        # emperically set weight by values from value net
+        avg_values = values.mean(axis = 0)
+        # ascending order
+        arg_index = th.argsort(avg_values)
+        w = self.weight_coef[arg_index].astype('float32')
+        return th.from_numpy(w)
 
     def train(self) -> None:
         """
@@ -208,20 +226,23 @@ class PPO(OnPolicyAlgorithm):
                     self.policy.reset_noise(self.batch_size)
 
                 values, log_prob, entropy = self.policy.evaluate_actions(rollout_data.observations, actions)
-                values = values.flatten()
+                # sort w by values 
+                w = self.get_sorted_weight(values)
                 # Normalize advantage
                 advantages = rollout_data.advantages
                 # Normalization does not make sense if mini batchsize == 1, see GH issue #325
                 if self.normalize_advantage and len(advantages) > 1:
-                    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+                    # for each reward (in SO dim=2), normalize it
+                    advantages = (advantages - advantages.mean(axis=0)) / (advantages.std(axis=0) + 1e-8)
 
                 # ratio between old and new policy, should be one at the first iteration
-                ratio = th.exp(log_prob - rollout_data.old_log_prob)
+                ratio = th.exp(log_prob - rollout_data.old_log_prob).unsqueeze(dim = -1)
 
                 # clipped surrogate loss
                 policy_loss_1 = advantages * ratio
                 policy_loss_2 = advantages * th.clamp(ratio, 1 - clip_range, 1 + clip_range)
-                policy_loss = -th.min(policy_loss_1, policy_loss_2).mean()
+                policy_loss_objs = -th.minimum(policy_loss_1, policy_loss_2).mean(axis = 0)
+                policy_loss = th.dot(policy_loss_objs, w)
 
                 # Logging
                 pg_losses.append(policy_loss.item())
@@ -238,15 +259,16 @@ class PPO(OnPolicyAlgorithm):
                         values - rollout_data.old_values, -clip_range_vf, clip_range_vf
                     )
                 # Value loss using the TD(gae_lambda) target
-                value_loss = F.mse_loss(rollout_data.returns, values_pred)
+                value_loss_objs = F.mse_loss(rollout_data.returns, values_pred, reduction='none').mean(axis = 0)
+                value_loss = th.dot(value_loss_objs, w)
                 value_losses.append(value_loss.item())
 
                 # Entropy loss favor exploration
                 if entropy is None:
                     # Approximate entropy when no analytical form
-                    entropy_loss = -th.mean(-log_prob)
+                    entropy_loss = -th.mean(-log_prob) * self.weight_coef.sum()
                 else:
-                    entropy_loss = -th.mean(entropy)
+                    entropy_loss = -th.mean(entropy) * self.weight_coef.sum()
 
                 entropy_losses.append(entropy_loss.item())
 

@@ -40,7 +40,7 @@ def read_result_data(pattern_list, keys_list=None):
         tmp_df = read_csv(pattern)
         tmp_df['GGF_Score'] = compute_GGF(tmp_df, reward_n=2, weight_coef=2)
         # subset of df_ppo
-        tmp_df = tmp_df[tmp_df['step']%20 == 18]
+        #tmp_df = tmp_df[tmp_df['step']%20 == 18]
         tmp_df = tmp_df[tmp_df['step'] < 60000]
         tmp_df['Algorithm'] = [key] * tmp_df.shape[0]
         df_list.append(tmp_df)
@@ -48,18 +48,29 @@ def read_result_data(pattern_list, keys_list=None):
     data_ = pd.concat(df_list, ignore_index=True)
     return data_
 
-pattern_list  = ['reward_a2c', 'reward_a2cggi', 'reward_ppo', 'reward_ppoggi','reward_dqn', 'reward_dqnggi','reward_random']
+pattern_list  = ['reward_a2c', 'reward_a2cggi', 'sb3_reward_ppo', 'sb3_reward_ppoggi','reward_dqn', 'reward_dqnggi','reward_random']
 keys_list = ['A2C', 'GGF-A2C', 'PPO', 'GGF-PPO', 'DQN', 'GGF-DQN', 'Random']
 result_df = read_result_data(pattern_list, keys_list)
 
-# learning figure
-plt.figure(figsize=(14, 7))
-sns.lineplot(data=result_df, x="step", y="Sum", hue='Algorithm')
-plt.legend()
-plt.show()
+def plot_accumulated_density(df, algs_list):
+    plt.figure(figsize=(14, 7))
+    for alg in algs_list:
+        alg_df = df[df['Algorithm']==alg]
+        group_df = alg_df.groupby(['step']).first().reset_index()[['step']]
+        group_df['Sum_mean'] = alg_df.groupby(['step'])['Sum'].mean().reset_index()['Sum']
+        group_df['Sum_std'] = alg_df.groupby(['step'])['Sum'].std().reset_index()['Sum']
+
+        plt.plot(group_df['step'], group_df['Sum_mean'], label=alg)
+        plt.fill_between(group_df['step'], group_df['Sum_mean'] - group_df['Sum_std'], group_df['Sum_mean'] + group_df['Sum_std'], alpha=0.2)
+    
+    plt.legend(loc = 'best')
+    plt.show()
+
+plot_accumulated_density(result_df, keys_list)
+
 
 # boxplot with matplotlib
-final_result_df = result_df[result_df['step'] == max(result_df['step'])]
+final_result_df = result_df[result_df['step'] >= (max(result_df['step'])-5)]
 boxplot_data = []
 keys_list_boxplot = ['DQN', 'GGF-DQN', 'A2C', 'GGF-A2C', 'PPO', 'GGF-PPO']
 for key in keys_list_boxplot:

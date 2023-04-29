@@ -10,15 +10,6 @@ from sympy import im
 from so_abalone_env import PredatorPrey 
 
 from stable_baselines3.common.vec_env import SubprocVecEnv
-from stable_baselines3.common.utils import (
-    check_for_correct_spaces,
-    get_device,
-    get_schedule_fn,
-    get_system_info,
-    set_random_seed,
-    update_learning_rate,
-)
-
 
 def make_env(rank, ggi, ifr, ifrnum):
     """
@@ -51,18 +42,31 @@ if __name__ == '__main__':
     env = SubprocVecEnv([make_env(f'ggi{i}' if ggi else i, ggi, args.ifr, args.ifrnum) for i in range(n_cpu)])
     reward_space = 2
 
-    from stable_baselines3.ppo import PPO, MlpPolicy
-    model = PPO(
-        policy = MlpPolicy,
-        env = env,
-        gamma = args.gamma,
-        n_steps = args.steps,
-        verbose = 1,
-        learning_rate = args.alpha,
-        clip_range = args.clip_range
-    )
-    from stable_baselines3.common_ggi.policies import GGIActorCriticPolicy
-    lr_schedule = get_schedule_fn(0.1)
-    mlp = GGIActorCriticPolicy(env.observation_space, env.action_space, lr_schedule, reward_dim=2)
+    if ggi:
+        from stable_baselines3.ppo_ggi import PPO_GGI, GGIMlpPolicy
+        model = PPO_GGI(
+            policy = GGIMlpPolicy,
+            env = env,
+            reward_space = reward_space,
+            weight_coef = args.weight,
+            gamma = args.gamma,
+            n_steps = args.steps,
+            verbose = 1,
+            ent_coef = 0.1,
+            learning_rate = args.alpha,
+            clip_range = args.clip_range
+        )
+    else:
+        from stable_baselines3.ppo import PPO, MlpPolicy
+        model = PPO(
+            policy = MlpPolicy,
+            env = env,
+            gamma = args.gamma,
+            n_steps = args.steps,
+            verbose = 1,
+            ent_coef = 0.1,
+            learning_rate = args.alpha,
+            clip_range = args.clip_range
+        )
 
     model.learn(total_timesteps=1000000)
