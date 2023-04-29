@@ -6,9 +6,19 @@ import sys
 import pandas as pd
 from gym import spaces
 import numpy as np
+from sympy import im
 from so_abalone_env import PredatorPrey 
 
 from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.utils import (
+    check_for_correct_spaces,
+    get_device,
+    get_schedule_fn,
+    get_system_info,
+    set_random_seed,
+    update_learning_rate,
+)
+
 
 def make_env(rank, ggi, ifr, ifrnum):
     """
@@ -33,7 +43,7 @@ if __name__ == '__main__':
     prs.add_argument("-fnum", dest="ifrnum", type=int, default=2, required=False, help="Functional Response Num for SC\n")
     prs.add_argument("-w", dest="weight", type=int, default=2, required=False, help="Weight coefficient\n")
     prs.add_argument("-ggi", action="store_true", default=False, help="Run GGI algo or not.\n")
-    args = prs.parse_args()
+    args = prs.parse_args("")
 
     # multiprocess environment
     n_cpu = 10
@@ -51,5 +61,8 @@ if __name__ == '__main__':
         learning_rate = args.alpha,
         clip_range = args.clip_range
     )
+    from stable_baselines3.common_ggi.policies import GGIActorCriticPolicy
+    lr_schedule = get_schedule_fn(0.1)
+    mlp = GGIActorCriticPolicy(env.observation_space, env.action_space, lr_schedule, reward_dim=2)
 
     model.learn(total_timesteps=1000000)
