@@ -92,3 +92,38 @@ final_result_barchart.plot(
     )
 plt.legend(loc = 'upper right')
 plt.show()
+
+# benchmark: randomly
+def test_benchmark_policy(fnPattern):
+    random_df = read_csv(fnPattern)
+    # Confidence interval for Sea_Otters and Northern_Abalone
+    group_df = random_df.groupby(['step']).first().reset_index()[['step']]
+    group_df['Sea_Otters_std'] = random_df.groupby(['step'])['Sea_Otters'].std().reset_index()['Sea_Otters']
+    group_df['Northern_Abalone_std'] = random_df.groupby(['step'])['Northern_Abalone'].std().reset_index()['Northern_Abalone']
+    group_df['Sea_Otters_mean'] = random_df.groupby(['step'])['Sea_Otters'].mean().reset_index()['Sea_Otters']
+    group_df['Northern_Abalone_mean'] = random_df.groupby(['step'])['Northern_Abalone'].mean().reset_index()['Northern_Abalone']
+    plt.figure(figsize=(10, 5))
+    plt.plot(group_df['step'], group_df['Sea_Otters_mean'], label='Sea_Otters')
+    plt.fill_between(group_df['step'], group_df['Sea_Otters_mean'] - group_df['Sea_Otters_std'], group_df['Sea_Otters_mean'] + group_df['Sea_Otters_std'], alpha=0.2)
+    plt.plot(group_df['step'], group_df['Northern_Abalone_mean'], label='Northern_Abalone')
+    plt.fill_between(group_df['step'], group_df['Northern_Abalone_mean'] - group_df['Northern_Abalone_std'], group_df['Northern_Abalone_mean'] + group_df['Northern_Abalone_std'], alpha=0.2)
+    plt.legend(loc = 'best')
+    plt.show()
+
+test_benchmark_policy('reward_random')
+
+# test: always take one action
+# Action 0
+test_benchmark_policy('reward_action0_run')
+
+# Action 1
+test_benchmark_policy('reward_action1_run')
+
+# Action 2
+test_benchmark_policy('reward_action2_run')
+
+# Action 3
+test_benchmark_policy('reward_action3_run')
+
+# Action 4
+test_benchmark_policy('reward_action4_run')

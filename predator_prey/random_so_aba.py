@@ -11,13 +11,24 @@ if __name__ == '__main__':
     prs.add_argument("-fr", dest="ifr", type=int, default=2, required=False, help="Functional Response for SC\n")
     prs.add_argument("-fnum", dest="ifrnum", type=int, default=2, required=False, help="Functional Response Num for SC\n")
     prs.add_argument("-id", dest="run_index", type=int, default=0, help="Run index.\n")
+    prs.add_argument("-act", dest="action", type=int, default=None, help="Take action manually.\n")
     args = prs.parse_args()
 
+
     ggi = False
-    env = PredatorPrey(out_csv_name=f'results/reward_random{args.run_index}', ggi=ggi, iFR=args.ifr, iFRnum=args.ifrnum)
+    if args.action is None:
+        # no selected action, random
+        env = PredatorPrey(out_csv_name=f'results/reward_random{args.run_index}', ggi=ggi, iFR=args.ifr, iFRnum=args.ifrnum)
+    else:
+        # selected action
+        env = PredatorPrey(out_csv_name=f'results/reward_action{args.action}_run{args.run_index}', ggi=ggi, iFR=args.ifr, iFRnum=args.ifrnum)
+    
     obs = env.reset()
     for i in range(100000):
-        action = env.action_space.sample()
+        if args.action is None:
+            action = env.action_space.sample()
+        else:
+            action = args.action
         obs, reward, done, _ = env.step(action)
         if done:
             env.reset()
