@@ -457,7 +457,8 @@ class PredatorPrey(gym.Env):
         return {
             'Sea_Otters': self.abundance,
             'Northern_Abalone': self.density,
-            'Sum': self.abundance + self.density
+            'Sum': self.abundance + self.density,
+            'TimeLimit.truncated': self.step_counter >= self.episode_length,
         }
 
     def adjust_poach_rate(self, action):
