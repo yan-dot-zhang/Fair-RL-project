@@ -60,7 +60,7 @@ def plot_accumulated_density(df, algs_list):
         group_df['Sum_mean'] = alg_df.groupby(['step'])['Sum'].mean().reset_index()['Sum']
         group_df['Sum_std'] = alg_df.groupby(['step'])['Sum'].std().reset_index()['Sum']
         # make the Sum_mean smoother and keep the same length
-        ma_length = 500
+        ma_length = 100
         group_df['Sum_mean'] = group_df['Sum_mean'].rolling(ma_length, min_periods=1).mean()
         group_df['Sum_std'] = group_df['Sum_std'].rolling(ma_length, min_periods=1).mean()
 
