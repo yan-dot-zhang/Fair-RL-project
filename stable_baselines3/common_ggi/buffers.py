@@ -6,8 +6,11 @@ import numpy as np
 import torch as th
 from gym import spaces
 
-from stable_baselines3.common.buffers import BaseBuffer
-from stable_baselines3.common_ggi.type_aliases import GGIRolloutBufferSamples
+from stable_baselines3.common.buffers import BaseBuffer, ReplayBuffer
+from stable_baselines3.common_ggi.type_aliases import (
+    GGIRolloutBufferSamples,
+    ReplayBufferSamples,
+)
 
 from stable_baselines3.common.vec_env import VecNormalize
 
@@ -199,3 +202,74 @@ class GGIRolloutBuffer(BaseBuffer):
             self.rewards[batch_inds].flatten().reshape((-1,self.reward_space)),
         )
         return GGIRolloutBufferSamples(*tuple(map(self.to_torch, data)))
+
+class GGIReplayBuffer(ReplayBuffer):
+    """
+    Replay buffer GGF version used in off-policy algorithms DQN-GGI.
+
+    :param buffer_size: Max number of element in the buffer
+    :param observation_space: Observation space
+    :param action_space: Action space
+    :param reward_space: Dimension of rewards, in multi-objective env
+    :param device: PyTorch device
+    :param n_envs: Number of parallel environments
+    :param optimize_memory_usage: Enable a memory efficient variant
+        of the replay buffer which reduces by almost a factor two the memory used,
+        at a cost of more complexity.
+        See https://github.com/DLR-RM/stable-baselines3/issues/37#issuecomment-637501195
+        and https://github.com/DLR-RM/stable-baselines3/pull/28#issuecomment-637559274
+        Cannot be used in combination with handle_timeout_termination.
+    :param handle_timeout_termination: Handle timeout termination (due to timelimit)
+        separately and treat the task as infinite horizon task.
+        https://github.com/DLR-RM/stable-baselines3/issues/284
+    """
+    def __init__(
+            self,
+            buffer_size: int,
+            observation_space: spaces.Space,
+            action_space: spaces.Space,
+            reward_space: int,
+            device: Union[th.device, str] = "auto",
+            n_envs: int = 1,
+            optimize_memory_usage: bool = False,
+            handle_timeout_termination: bool = True,
+        ):
+        # call __init__ of Replaybuffer
+        super().__init__(
+            buffer_size = buffer_size,
+            observation_space = observation_space,
+            action_space = action_space,
+            device = device,
+            n_envs = n_envs,
+            optimize_memory_usage = optimize_memory_usage,
+            handle_timeout_termination = handle_timeout_termination,
+        )
+
+        # store reward space
+        self.reward_space = reward_space
+        # rewrite self.rewards in Replaybuffer
+        self.rewards = np.zeros((self.buffer_size, self.n_envs, self.reward_space), dtype=np.float32)
+
+    # def add(), still the same
+    # def sample(), still the same
+    
+    # rewrite _get_samples() since rewards is different
+    def _get_samples(self, batch_inds: np.ndarray, env: Optional[VecNormalize] = None) -> ReplayBufferSamples:
+        # Sample randomly the env idx
+        env_indices = np.random.randint(0, high=self.n_envs, size=(len(batch_inds),))
+
+        if self.optimize_memory_usage:
+            next_obs = self._normalize_obs(self.observations[(batch_inds + 1) % self.buffer_size, env_indices, :], env)
+        else:
+            next_obs = self._normalize_obs(self.next_observations[batch_inds, env_indices, :], env)
+
+        data = (
+            self._normalize_obs(self.observations[batch_inds, env_indices, :], env),
+            self.actions[batch_inds, env_indices, :],
+            next_obs,
+            # Only use dones that are not due to timeouts
+            # deactivated by default (timeouts is initialized as an array of False)
+            (self.dones[batch_inds, env_indices] * (1 - self.timeouts[batch_inds, env_indices])).reshape(-1, 1),
+            self._normalize_reward(self.rewards[batch_inds, env_indices].reshape(-1, self.reward_space), env),
+        )
+        return ReplayBufferSamples(*tuple(map(self.to_torch, data)))
