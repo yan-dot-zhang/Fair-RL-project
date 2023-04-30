@@ -7,10 +7,8 @@ import torch as th
 from gym import spaces
 
 from stable_baselines3.common.buffers import BaseBuffer, ReplayBuffer
-from stable_baselines3.common_ggi.type_aliases import (
-    GGIRolloutBufferSamples,
-    ReplayBufferSamples,
-)
+from stable_baselines3.common_ggi.type_aliases import GGIRolloutBufferSamples
+from stable_baselines3.common.type_aliases import ReplayBufferSamples
 
 from stable_baselines3.common.vec_env import VecNormalize
 

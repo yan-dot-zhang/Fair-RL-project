@@ -48,7 +48,7 @@ def read_result_data(pattern_list, keys_list=None):
     data_ = pd.concat(df_list, ignore_index=True)
     return data_
 
-pattern_list  = ['sb3_reward_a2c', 'sb3_reward_a2cggi', 'sb3_reward_ppo', 'sb3_reward_ppoggi','reward_dqn', 'reward_dqnggi','reward_random']
+pattern_list  = ['sb3_reward_a2c', 'sb3_reward_a2cggi', 'sb3_reward_ppo', 'sb3_reward_ppoggi','sb3_reward_dqn', 'sb3_reward_dqnggi','reward_random']
 keys_list = ['A2C', 'GGF-A2C', 'PPO', 'GGF-PPO', 'DQN', 'GGF-DQN', 'Random']
 result_df = read_result_data(pattern_list, keys_list)
 
@@ -60,7 +60,7 @@ def plot_accumulated_density(df, algs_list):
         group_df['Sum_mean'] = alg_df.groupby(['step'])['Sum'].mean().reset_index()['Sum']
         group_df['Sum_std'] = alg_df.groupby(['step'])['Sum'].std().reset_index()['Sum']
         # make the Sum_mean smoother and keep the same length
-        ma_length = 100
+        ma_length = 300
         group_df['Sum_mean'] = group_df['Sum_mean'].rolling(ma_length, min_periods=1).mean()
         group_df['Sum_std'] = group_df['Sum_std'].rolling(ma_length, min_periods=1).mean()
 
@@ -86,9 +86,9 @@ plt.show()
 
 # barchart
 # for each algorithm, compute average density and std, use dataframe.groupby
-final_result_barchart = final_result_df.groupby(['Algorithm']).mean().reset_index()
-final_result_barchart['Sea_Otters_std'] = final_result_df.groupby(['Algorithm']).std().reset_index()['Sea_Otters']
-final_result_barchart['Northern_Abalone_std'] = final_result_df.groupby(['Algorithm']).std().reset_index()['Northern_Abalone']
+final_result_barchart = final_result_df.groupby(['Algorithm']).mean(numeric_only = True).reset_index()
+final_result_barchart['Sea_Otters_std'] = final_result_df.groupby(['Algorithm']).std(numeric_only = True).reset_index()['Sea_Otters']
+final_result_barchart['Northern_Abalone_std'] = final_result_df.groupby(['Algorithm']).std(numeric_only = True).reset_index()['Northern_Abalone']
 # sort and filter by 'Algorithm' and keys_list_boxplot
 final_result_barchart = final_result_barchart[final_result_barchart['Algorithm'].isin(keys_list_boxplot)]
 # sort by the order of keys_list_boxplot
@@ -105,5 +105,5 @@ final_result_barchart.plot(
     color=['darkred', 'orange'],
     ax = ax.gca()
     )
-plt.legend(loc = 'upper right')
+plt.legend(loc = 'best')
 plt.show()
