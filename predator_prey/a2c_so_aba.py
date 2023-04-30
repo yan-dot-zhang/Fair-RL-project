@@ -8,7 +8,7 @@ from gym import spaces
 import numpy as np
 from so_abalone_env import PredatorPrey 
 
-from stable_baselines.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv
 
 def make_env(rank, ggi, ifr, ifrnum):
     """
@@ -17,7 +17,7 @@ def make_env(rank, ggi, ifr, ifrnum):
     :param rank: (int) index of the subprocess
     """
     def _init():
-        env = PredatorPrey(out_csv_name='results/reward_a2c{}'.format(rank), ggi=ggi, iFR=ifr, iFRnum=ifrnum)
+        env = PredatorPrey(out_csv_name='results/sb3_reward_a2c{}'.format(rank), ggi=ggi, iFR=ifr, iFRnum=ifrnum)
         
         return env
     return _init
@@ -25,7 +25,7 @@ def make_env(rank, ggi, ifr, ifrnum):
 if __name__ == '__main__':
     prs = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                   description="""A2C on SC""")
-    prs.add_argument("-a", dest="alpha", type=float, default=0.0001, required=False, help="Alpha learning rate.\n")
+    prs.add_argument("-a", dest="alpha", type=float, default=0.00005, required=False, help="Alpha learning rate.\n")
     prs.add_argument("-st", dest="steps", type=int, default=5, required=False, help="n steps for A2C.\n")
     prs.add_argument("-fr", dest="ifr", type=int, default=2, required=False, help="Functional Response for SC\n")
     prs.add_argument("-fnum", dest="ifrnum", type=int, default=2, required=False, help="Functional Response Num for SC\n")
@@ -40,28 +40,32 @@ if __name__ == '__main__':
     reward_space = 2
 
     if ggi:
-        from stable_baselines.a2c_ggi import A2C_GGI
-        from stable_baselines.common.policies_ggi import MlpPolicy as GGIMlpPolicy
+        from stable_baselines3.a2c_ggi import A2C_GGI, GGIMlpPolicy
         model = A2C_GGI(
-            policy = GGIMlpPolicy, 
-            env = env, 
-            reward_space = reward_space, 
-            weight_coef = args.weight, 
-            verbose=0, 
-            learning_rate=args.alpha, 
-            n_steps=args.steps, 
-            lr_schedule='constant'
+            policy = GGIMlpPolicy,
+            env = env,
+            reward_space = reward_space,
+            weight_coef = args.weight,
+            verbose = 1,
+            learning_rate=args.alpha,
+            n_steps=args.steps,
+            ent_coef = 0.01,
+            vf_coef = 0.25,
+            gae_lambda = 0.95,
+            normalize_advantage = False,
         )
     else:
-        from stable_baselines import A2C
-        from stable_baselines.common.policies import MlpPolicy
+        from stable_baselines3.a2c import A2C, MlpPolicy
         model = A2C(
-            policy = MlpPolicy, 
-            env = env, 
-            verbose=0, 
-            learning_rate=args.alpha, 
-            n_steps=args.steps, 
-            lr_schedule='constant'
+            policy = MlpPolicy,
+            env = env,
+            verbose=1,
+            learning_rate=args.alpha,
+            n_steps=args.steps,
+            ent_coef = 0.01,
+            vf_coef = 0.25,
+            gae_lambda = 0.95,
+            normalize_advantage = False,
         )
 
     model.learn(total_timesteps=1000000)

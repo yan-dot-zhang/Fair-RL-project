@@ -7,8 +7,6 @@ Adapted on Wed Apr 26, 2023.
 # temporarily disable the warnings
 import warnings
 warnings.filterwarnings("ignore")
-import tensorflow.compat.v1 as tf
-tf.logging.set_verbosity(tf.logging.ERROR)
 
 import gym
 import numpy as np
