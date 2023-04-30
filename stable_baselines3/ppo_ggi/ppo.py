@@ -27,6 +27,8 @@ class PPO_GGI(GGIOnPolicyAlgorithm):
 
     :param policy: The policy model to use (MlpPolicy, CnnPolicy, ...)
     :param env: The environment to learn from (if registered in Gym, can be str)
+    :param reward_space: Dimension of rewards function
+    :param weight_coef: weight for GGF
     :param learning_rate: The learning rate, it can be a function
         of the current progress remaining (from 1 to 0)
     :param n_steps: The number of steps to run for each environment per update
@@ -184,11 +186,11 @@ class PPO_GGI(GGIOnPolicyAlgorithm):
 
             self.clip_range_vf = get_schedule_fn(self.clip_range_vf)
 
-    def get_sorted_weight(self, values:th.Tensor) -> th.Tensor:
+    def _get_sorted_weight(self, values:th.Tensor) -> th.Tensor:
         # emperically set weight by values from value net
-        avg_values = values.mean(axis = 0)
+        avg_values = values.mean(axis = 0).detach().numpy()
         # ascending order
-        arg_index = th.argsort(avg_values)
+        arg_index = np.argsort(avg_values)
         w = self.weight_coef[arg_index].astype('float32')
         return th.from_numpy(w)
 
@@ -227,7 +229,7 @@ class PPO_GGI(GGIOnPolicyAlgorithm):
 
                 values, log_prob, entropy = self.policy.evaluate_actions(rollout_data.observations, actions)
                 # sort w by values 
-                w = self.get_sorted_weight(values)
+                w = self._get_sorted_weight(rollout_data.rewards)
                 # Normalize advantage
                 advantages = rollout_data.advantages
                 # Normalization does not make sense if mini batchsize == 1, see GH issue #325
@@ -317,6 +319,8 @@ class PPO_GGI(GGIOnPolicyAlgorithm):
         self.logger.record("train/clip_range", clip_range)
         if self.clip_range_vf is not None:
             self.logger.record("train/clip_range_vf", clip_range_vf)
+
+        self.logger.record("train/weight", np.array(w))
 
     def learn(
         self: SelfPPO,

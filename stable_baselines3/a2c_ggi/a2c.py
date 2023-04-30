@@ -1,20 +1,22 @@
 from typing import Any, Dict, Optional, Type, TypeVar, Union
 
+import numpy as np
 import torch as th
 from gym import spaces
 from torch.nn import functional as F
 
-from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
-from stable_baselines3.common.policies import ActorCriticCnnPolicy, ActorCriticPolicy, BasePolicy, MultiInputActorCriticPolicy
+from stable_baselines3.common_ggi.on_policy_algorithm import GGIOnPolicyAlgorithm
+from stable_baselines3.common.policies import BasePolicy
+from stable_baselines3.common_ggi.policies import GGIActorCriticCnnPolicy, GGIActorCriticPolicy, GGIMultiInputActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from stable_baselines3.common.utils import explained_variance
 
-SelfA2C = TypeVar("SelfA2C", bound="A2C")
+SelfA2C = TypeVar("SelfA2C", bound="A2C_GGI")
 
 
-class A2C(OnPolicyAlgorithm):
+class A2C_GGI(GGIOnPolicyAlgorithm):
     """
-    Advantage Actor Critic (A2C)
+    Advantage Actor Critic (A2C) on GGF (A2C-GGF) 
 
     Paper: https://arxiv.org/abs/1602.01783
     Code: This implementation borrows code from https://github.com/ikostrikov/pytorch-a2c-ppo-acktr-gail and
@@ -55,19 +57,21 @@ class A2C(OnPolicyAlgorithm):
     """
 
     policy_aliases: Dict[str, Type[BasePolicy]] = {
-        "MlpPolicy": ActorCriticPolicy,
-        "CnnPolicy": ActorCriticCnnPolicy,
-        "MultiInputPolicy": MultiInputActorCriticPolicy,
+        "MlpPolicy": GGIActorCriticPolicy,
+        "CnnPolicy": GGIActorCriticCnnPolicy,
+        "MultiInputPolicy": GGIMultiInputActorCriticPolicy,
     }
 
     def __init__(
         self,
-        policy: Union[str, Type[ActorCriticPolicy]],
+        policy: Union[str, Type[GGIActorCriticPolicy]],
         env: Union[GymEnv, str],
+        reward_space: int,
+        weight_coef: Union[int, float, np.ndarray],
         learning_rate: Union[float, Schedule] = 7e-4,
         n_steps: int = 5,
         gamma: float = 0.99,
-        gae_lambda: float = 1.0,
+        gae_lambda: float = 0.95,
         ent_coef: float = 0.0,
         vf_coef: float = 0.5,
         max_grad_norm: float = 0.5,
@@ -87,6 +91,7 @@ class A2C(OnPolicyAlgorithm):
         super().__init__(
             policy,
             env,
+            reward_space = reward_space,
             learning_rate=learning_rate,
             n_steps=n_steps,
             gamma=gamma,
@@ -119,8 +124,24 @@ class A2C(OnPolicyAlgorithm):
             self.policy_kwargs["optimizer_class"] = th.optim.RMSprop
             self.policy_kwargs["optimizer_kwargs"] = dict(alpha=0.99, eps=rms_prop_eps)
 
+        # if weight_coef is scalar, compute weight by 1/weight_coef**i
+        if np.isscalar(weight_coef):
+            self.weight_coef = np.array([1 / (weight_coef ** i) for i in range(reward_space)])
+        elif len(weight_coef) == reward_space:
+            self.weight_coef = weight_coef
+        else:
+            raise TypeError("`weight_coef` should be either scalar or array with length reward_space")
+
         if _init_setup_model:
             self._setup_model()
+
+    def _get_sorted_weight(self, values:th.Tensor) -> th.Tensor:
+        # emperically set weight by values from value net
+        avg_values = values.mean(axis = 0).detach().numpy()
+        # ascending order
+        arg_index = np.argsort(avg_values)
+        w = self.weight_coef[arg_index].astype('float32')
+        return th.from_numpy(w)
 
     def train(self) -> None:
         """
@@ -133,7 +154,9 @@ class A2C(OnPolicyAlgorithm):
         # Update optimizer learning rate
         self._update_learning_rate(self.policy.optimizer)
 
-        # This will only loop once (get all data in one go)
+        # This will only loop once (get all data in one go), 
+        # since there is only one gradient descent step
+        # ref: https://www.cs.mcgill.ca/~dprecup/courses/Winter2023/Lectures/12-polgrad-2023.pdf
         for rollout_data in self.rollout_buffer.get(batch_size=None):
             actions = rollout_data.actions
             if isinstance(self.action_space, spaces.Discrete):
@@ -141,25 +164,29 @@ class A2C(OnPolicyAlgorithm):
                 actions = actions.long().flatten()
 
             values, log_prob, entropy = self.policy.evaluate_actions(rollout_data.observations, actions)
-            values = values.flatten()
+            # sort w by values 
+            w = self._get_sorted_weight(rollout_data.rewards)
 
             # Normalize advantage (not present in the original implementation)
             advantages = rollout_data.advantages
             if self.normalize_advantage:
-                advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+                advantages = (advantages - advantages.mean(axis = 0)) / (advantages.std(axis = 0) + 1e-8)
 
             # Policy gradient loss
-            policy_loss = -(advantages * log_prob).mean()
+            _log_prob = log_prob.unsqueeze(dim = -1)
+            policy_loss_objs = -(advantages * _log_prob).mean(axis = 0)
+            policy_loss = th.dot(policy_loss_objs, w)
 
             # Value loss using the TD(gae_lambda) target
-            value_loss = F.mse_loss(rollout_data.returns, values)
+            value_loss_objs = F.mse_loss(rollout_data.returns, values, reduction='none').mean(axis = 0)
+            value_loss = th.dot(value_loss_objs, w)
 
             # Entropy loss favor exploration
             if entropy is None:
                 # Approximate entropy when no analytical form
-                entropy_loss = -th.mean(-log_prob)
+                entropy_loss = -th.mean(-log_prob) * self.weight_coef.sum()
             else:
-                entropy_loss = -th.mean(entropy)
+                entropy_loss = -th.mean(entropy) * self.weight_coef.sum()
 
             loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss
 

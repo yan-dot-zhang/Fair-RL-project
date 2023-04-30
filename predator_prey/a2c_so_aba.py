@@ -25,7 +25,7 @@ def make_env(rank, ggi, ifr, ifrnum):
 if __name__ == '__main__':
     prs = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                   description="""A2C on SC""")
-    prs.add_argument("-a", dest="alpha", type=float, default=0.0001, required=False, help="Alpha learning rate.\n")
+    prs.add_argument("-a", dest="alpha", type=float, default=0.00005, required=False, help="Alpha learning rate.\n")
     prs.add_argument("-st", dest="steps", type=int, default=5, required=False, help="n steps for A2C.\n")
     prs.add_argument("-fr", dest="ifr", type=int, default=2, required=False, help="Functional Response for SC\n")
     prs.add_argument("-fnum", dest="ifrnum", type=int, default=2, required=False, help="Functional Response Num for SC\n")
@@ -39,14 +39,34 @@ if __name__ == '__main__':
     env = SubprocVecEnv([make_env(f'ggi{i}' if ggi else i, ggi, args.ifr, args.ifrnum) for i in range(n_cpu)])
     reward_space = 2
 
-    from stable_baselines3.a2c import A2C, MlpPolicy
-    model = A2C(
-        policy = MlpPolicy,
-        env = env,
-        verbose=1,
-        learning_rate=args.alpha,
-        n_steps=args.steps
-    )
+    if ggi:
+        from stable_baselines3.a2c_ggi import A2C_GGI, GGIMlpPolicy
+        model = A2C_GGI(
+            policy = GGIMlpPolicy,
+            env = env,
+            reward_space = reward_space,
+            weight_coef = args.weight,
+            verbose = 1,
+            learning_rate=args.alpha,
+            n_steps=args.steps,
+            ent_coef = 0.01,
+            vf_coef = 0.25,
+            gae_lambda = 0.95,
+            normalize_advantage = False,
+        )
+    else:
+        from stable_baselines3.a2c import A2C, MlpPolicy
+        model = A2C(
+            policy = MlpPolicy,
+            env = env,
+            verbose=1,
+            learning_rate=args.alpha,
+            n_steps=args.steps,
+            ent_coef = 0.01,
+            vf_coef = 0.25,
+            gae_lambda = 0.95,
+            normalize_advantage = False,
+        )
 
     model.learn(total_timesteps=1000000)
 

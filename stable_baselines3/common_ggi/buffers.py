@@ -7,7 +7,7 @@ import torch as th
 from gym import spaces
 
 from stable_baselines3.common.buffers import BaseBuffer
-from stable_baselines3.common.type_aliases import RolloutBufferSamples
+from stable_baselines3.common_ggi.type_aliases import GGIRolloutBufferSamples
 
 from stable_baselines3.common.vec_env import VecNormalize
 
@@ -99,8 +99,15 @@ class GGIRolloutBuffer(BaseBuffer):
                 next_values = self.values[step + 1]
             # broadcast next_non_terminal over reward_space
             next_non_terminal = np.reshape(next_non_terminal, (-1, 1))
+            # test, let next_non_terminal always be 1, since there is no terminal states, 
+            # the env is done only when truncated. Thus, no need to avoid done
+            '''
             delta = self.rewards[step] + self.gamma * next_values * next_non_terminal - self.values[step]
-            last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
+            last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam'''
+
+            delta = self.rewards[step] + self.gamma * next_values - self.values[step]
+            last_gae_lam = delta + self.gamma * self.gae_lambda * last_gae_lam
+            
             self.advantages[step] = last_gae_lam
         # TD(lambda) estimator, see Github PR #375 or "Telescoping in TD(lambda)"
         # in David Silver Lecture 4: https://www.youtube.com/watch?v=PnHCvfgC_ZA
@@ -147,7 +154,7 @@ class GGIRolloutBuffer(BaseBuffer):
         if self.pos == self.buffer_size:
             self.full = True
 
-    def get(self, batch_size: Optional[int] = None) -> Generator[RolloutBufferSamples, None, None]:
+    def get(self, batch_size: Optional[int] = None) -> Generator[GGIRolloutBufferSamples, None, None]:
         assert self.full, ""
         indices = np.random.permutation(self.buffer_size * self.n_envs)
         # Prepare the data
@@ -159,6 +166,7 @@ class GGIRolloutBuffer(BaseBuffer):
                 "log_probs",
                 "advantages",
                 "returns",
+                "rewards",
             ]
 
             for tensor in _tensor_names:
@@ -178,7 +186,7 @@ class GGIRolloutBuffer(BaseBuffer):
         self,
         batch_inds: np.ndarray,
         env: Optional[VecNormalize] = None,
-    ) -> RolloutBufferSamples:  # type: ignore[signature-mismatch] #FIXME
+    ) -> GGIRolloutBufferSamples:  # type: ignore[signature-mismatch] #FIXME
         """There may be a bug since reward_space is not used
         """
         data = (
@@ -188,5 +196,6 @@ class GGIRolloutBuffer(BaseBuffer):
             self.log_probs[batch_inds].flatten(),
             self.advantages[batch_inds].flatten().reshape((-1,self.reward_space)),
             self.returns[batch_inds].flatten().reshape((-1,self.reward_space)),
+            self.rewards[batch_inds].flatten().reshape((-1,self.reward_space)),
         )
-        return RolloutBufferSamples(*tuple(map(self.to_torch, data)))
+        return GGIRolloutBufferSamples(*tuple(map(self.to_torch, data)))

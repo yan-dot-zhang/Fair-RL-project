@@ -23,7 +23,7 @@ def read_csv(fnPattern):
     df.sort_values(by=['step'], inplace=True, ignore_index=True)
     return df
 
-def compute_GGF(df, reward_n = 2, weight_coef = 10):
+def compute_GGF(df, reward_n = 2, weight_coef = 2):
     omega = np.array([1 / (weight_coef ** i) for i in range(reward_n)])
     max_val = df[['Sea_Otters', 'Northern_Abalone']].max(axis=1)
     min_val = df[['Sea_Otters', 'Northern_Abalone']].min(axis=1)
@@ -41,14 +41,14 @@ def read_result_data(pattern_list, keys_list=None):
         tmp_df['GGF_Score'] = compute_GGF(tmp_df, reward_n=2, weight_coef=2)
         # subset of df_ppo
         #tmp_df = tmp_df[tmp_df['step']%20 == 18]
-        tmp_df = tmp_df[tmp_df['step'] < 60000]
+        tmp_df = tmp_df[tmp_df['step'] < 100000]
         tmp_df['Algorithm'] = [key] * tmp_df.shape[0]
         df_list.append(tmp_df)
     # merge dataframes
     data_ = pd.concat(df_list, ignore_index=True)
     return data_
 
-pattern_list  = ['reward_a2c', 'reward_a2cggi', 'sb3_reward_ppo', 'sb3_reward_ppoggi','reward_dqn', 'reward_dqnggi','reward_random']
+pattern_list  = ['sb3_reward_a2c', 'sb3_reward_a2cggi', 'sb3_reward_ppo', 'sb3_reward_ppoggi','reward_dqn', 'reward_dqnggi','reward_random']
 keys_list = ['A2C', 'GGF-A2C', 'PPO', 'GGF-PPO', 'DQN', 'GGF-DQN', 'Random']
 result_df = read_result_data(pattern_list, keys_list)
 
@@ -59,8 +59,12 @@ def plot_accumulated_density(df, algs_list):
         group_df = alg_df.groupby(['step']).first().reset_index()[['step']]
         group_df['Sum_mean'] = alg_df.groupby(['step'])['Sum'].mean().reset_index()['Sum']
         group_df['Sum_std'] = alg_df.groupby(['step'])['Sum'].std().reset_index()['Sum']
+        # make the Sum_mean smoother and keep the same length
+        ma_length = 500
+        group_df['Sum_mean'] = group_df['Sum_mean'].rolling(ma_length, min_periods=1).mean()
+        group_df['Sum_std'] = group_df['Sum_std'].rolling(ma_length, min_periods=1).mean()
 
-        plt.plot(group_df['step'], group_df['Sum_mean'], label=alg)
+        plt.plot(group_df['step'], group_df['Sum_mean'], label=alg, alpha = 0.8)
         plt.fill_between(group_df['step'], group_df['Sum_mean'] - group_df['Sum_std'], group_df['Sum_mean'] + group_df['Sum_std'], alpha=0.2)
     
     plt.legend(loc = 'best')
